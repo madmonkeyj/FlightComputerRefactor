@@ -26,6 +26,11 @@ static SensorManager_Scales_t scales;
 static SensorManager_RawData_t latest_data;
 static uint32_t last_read_time_us = 0;
 
+/* DWT overflow tracking for extended microsecond timer */
+static uint32_t us_high_word = 0;
+static uint32_t last_cyccnt = 0;
+static uint32_t cycles_per_us = 0;
+
 /* Decimation counters and factors for low-priority sensors */
 static uint8_t baro_decimation_counter = 0;
 static uint8_t highg_decimation_counter = 0;
@@ -82,11 +87,26 @@ static inline uint32_t GetMicros(void);
 static void CalculateScalingFactors(void);
 static float CalculateAltitude(float pressure_pa, float sea_level_pa);
 
-/* Microsecond timer using DWT cycle counter (race-free, higher precision) */
+/**
+ * @brief Microsecond timer with overflow handling
+ * @note Uses DWT cycle counter with overflow detection
+ * @note Extends range from ~25 seconds to ~71 minutes before wrap
+ * @note At 170 MHz: CYCCNT wraps every ~25 seconds
+ * @note This implementation tracks overflows to extend to 2^32 µs (~71 min)
+ */
 static inline uint32_t GetMicros(void) {
-    /* DWT cycle counter is incremented on every CPU cycle */
-    /* At 170 MHz: 1 µs = 170 cycles */
-    return DWT->CYCCNT / (SystemCoreClock / 1000000U);
+    uint32_t cyccnt = DWT->CYCCNT;
+
+    /* Detect overflow (wrapping from 0xFFFFFFFF to 0x00000000) */
+    if (cyccnt < last_cyccnt) {
+        /* Overflow occurred - increment high word */
+        us_high_word += (0xFFFFFFFFU / cycles_per_us) + 1;
+    }
+
+    last_cyccnt = cyccnt;
+
+    /* Return combined microseconds (still wraps at ~71 minutes) */
+    return us_high_word + (cyccnt / cycles_per_us);
 }
 
 static void CalculateScalingFactors(void) {
@@ -126,6 +146,11 @@ HAL_StatusTypeDef SensorManager_Init(const SensorManager_Config_t *user_config) 
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  /* Enable trace */
     DWT->CYCCNT = 0;                                  /* Reset counter */
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;             /* Enable counter */
+
+    /* Initialize overflow tracking for extended microsecond timer */
+    cycles_per_us = SystemCoreClock / 1000000U;
+    us_high_word = 0;
+    last_cyccnt = 0;
 
     /* Initialize I2C DMA arbiter */
     I2C_DMA_Arbiter_Init();
@@ -469,4 +494,8 @@ void SensorManager_ResetState(void) {
     memset(&sensor_status, 0, sizeof(SensorManager_Status_t));
     memset(&latest_data, 0, sizeof(SensorManager_RawData_t));
     last_read_time_us = 0;
+
+    /* Reset overflow tracking for microsecond timer */
+    us_high_word = 0;
+    last_cyccnt = 0;
 }
