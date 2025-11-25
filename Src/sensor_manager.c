@@ -31,6 +31,10 @@ static uint32_t us_high_word = 0;
 static uint32_t last_cyccnt = 0;
 static uint32_t cycles_per_us = 0;
 
+/* Sensor calibration (optional, disabled by default) */
+static SensorCalibration_t active_calibration = {0};
+static bool calibration_enabled = false;
+
 /* Decimation counters and factors for low-priority sensors */
 static uint8_t baro_decimation_counter = 0;
 static uint8_t highg_decimation_counter = 0;
@@ -471,15 +475,78 @@ void SensorManager_GetMahonyData(const SensorManager_RawData_t *raw,
     *gy = (raw->gyro_y / ICM42688_GYRO_SCALE_2000DPS) * DEG_TO_RAD;
     *gz = (raw->gyro_z / ICM42688_GYRO_SCALE_2000DPS) * DEG_TO_RAD;
 
+    /* Apply gyro bias calibration if available */
+    if (calibration_enabled && active_calibration.gyro_bias_valid) {
+        *gx -= active_calibration.gyro_bias[0];
+        *gy -= active_calibration.gyro_bias[1];
+        *gz -= active_calibration.gyro_bias[2];
+    }
+
     // Accel: Convert from LSB to m/s²
     *ax = (raw->accel_x / ICM42688_ACCEL_SCALE_16G) * GRAVITY_MSS;
     *ay = (raw->accel_y / ICM42688_ACCEL_SCALE_16G) * GRAVITY_MSS;
     *az = (raw->accel_z / ICM42688_ACCEL_SCALE_16G) * GRAVITY_MSS;
 
+    /* Apply accel calibration if available */
+    if (calibration_enabled && active_calibration.accel_cal_valid) {
+        *ax = (*ax - active_calibration.accel_offset[0]) * active_calibration.accel_scale[0];
+        *ay = (*ay - active_calibration.accel_offset[1]) * active_calibration.accel_scale[1];
+        *az = (*az - active_calibration.accel_offset[2]) * active_calibration.accel_scale[2];
+    }
+
     // Mag: Convert from LSB to µT (microTesla)
     *mx = (raw->mag_x / MMC5983MA_MAG_SCALE) * GAUSS_TO_MICROTESLA;
     *my = (raw->mag_y / MMC5983MA_MAG_SCALE) * GAUSS_TO_MICROTESLA;
     *mz = (raw->mag_z / MMC5983MA_MAG_SCALE) * GAUSS_TO_MICROTESLA;
+
+    /* Apply magnetometer calibration if available */
+    if (calibration_enabled && active_calibration.mag_cal_valid) {
+        /* Hard iron compensation */
+        float mx_cal = *mx - active_calibration.mag_offset[0];
+        float my_cal = *my - active_calibration.mag_offset[1];
+        float mz_cal = *mz - active_calibration.mag_offset[2];
+
+        /* Soft iron compensation (3x3 matrix multiply) */
+        *mx = active_calibration.mag_scale[0][0] * mx_cal +
+              active_calibration.mag_scale[0][1] * my_cal +
+              active_calibration.mag_scale[0][2] * mz_cal;
+
+        *my = active_calibration.mag_scale[1][0] * mx_cal +
+              active_calibration.mag_scale[1][1] * my_cal +
+              active_calibration.mag_scale[1][2] * mz_cal;
+
+        *mz = active_calibration.mag_scale[2][0] * mx_cal +
+              active_calibration.mag_scale[2][1] * my_cal +
+              active_calibration.mag_scale[2][2] * mz_cal;
+    }
+}
+
+/**
+ * @brief Set sensor calibration parameters
+ * @param cal Pointer to calibration structure (or NULL to disable)
+ */
+void SensorManager_SetCalibration(const SensorCalibration_t* cal) {
+    if (cal == NULL) {
+        calibration_enabled = false;
+        memset(&active_calibration, 0, sizeof(SensorCalibration_t));
+    } else {
+        memcpy(&active_calibration, cal, sizeof(SensorCalibration_t));
+        calibration_enabled = true;
+    }
+}
+
+/**
+ * @brief Get current calibration parameters
+ * @param cal Pointer to store calibration
+ * @return true if calibration data copied successfully
+ */
+bool SensorManager_GetCalibration(SensorCalibration_t* cal) {
+    if (cal == NULL) {
+        return false;
+    }
+
+    memcpy(cal, &active_calibration, sizeof(SensorCalibration_t));
+    return true;
 }
 
 /**
@@ -498,4 +565,8 @@ void SensorManager_ResetState(void) {
     /* Reset overflow tracking for microsecond timer */
     us_high_word = 0;
     last_cyccnt = 0;
+
+    /* Reset calibration */
+    calibration_enabled = false;
+    memset(&active_calibration, 0, sizeof(SensorCalibration_t));
 }
