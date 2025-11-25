@@ -138,7 +138,11 @@ bool DataLogger_Init(void);
 bool DataLogger_StartRecording(void);
 bool DataLogger_StopRecording(void);
 bool DataLogger_RecordData(void);  // Reads from SensorManager, Mahony, GPS directly
-void DataLogger_Update(void);
+void DataLogger_Update(void);      // Call from main loop for periodic metadata saves
+
+// QSPI DMA callbacks (call from QSPI HAL callbacks)
+void DataLogger_QSPI_WriteComplete(void);  // Call when QSPI write DMA completes
+void DataLogger_QSPI_WriteError(void);      // Call when QSPI write DMA fails
 
 // Status and control
 bool DataLogger_GetStats(LoggerStats_t* stats);

@@ -34,6 +34,15 @@ static uint32_t recording_start_time = 0;
 static uint32_t last_record_time = 0;
 static uint32_t last_recording_attempt = 0;
 
+/* QSPI DMA state tracking */
+static volatile bool qspi_write_busy = false;
+static volatile bool qspi_write_error = false;
+
+/* Metadata management */
+static bool metadata_dirty = false;
+static uint32_t last_metadata_save_time = 0;
+#define METADATA_SAVE_INTERVAL_MS  10000  /* Save metadata every 10 seconds max */
+
 /* Temporary record buffer */
 static DataRecord_t temp_record;
 
@@ -110,6 +119,26 @@ static void PackDataRecord(DataRecord_t* record) {
 }
 
 /**
+ * @brief QSPI write completion callback
+ * @note Called from QSPI interrupt when DMA write completes successfully
+ * @note This function should be called from your QSPI HAL callback
+ */
+void DataLogger_QSPI_WriteComplete(void) {
+    qspi_write_busy = false;
+    qspi_write_error = false;
+}
+
+/**
+ * @brief QSPI write error callback
+ * @note Called from QSPI interrupt when DMA write fails
+ * @note This function should be called from your QSPI HAL error callback
+ */
+void DataLogger_QSPI_WriteError(void) {
+    qspi_write_busy = false;
+    qspi_write_error = true;
+}
+
+/**
  * @brief Initialize data logger
  */
 bool DataLogger_Init(void) {
@@ -163,52 +192,108 @@ bool DataLogger_StartRecording(void) {
 
 /**
  * @brief Stop recording
+ * @note Always saves metadata on stop to ensure state persisted
  */
 bool DataLogger_StopRecording(void) {
-    if (logger_status != LOGGER_RECORDING) return true;
+    if (logger_status != LOGGER_RECORDING) {
+        return true;
+    }
 
     logger_status = LOGGER_IDLE;
-    Metadata_Save();
+
+    /* Save metadata on stop (ensure state persisted) */
+    if (metadata_dirty) {
+        Metadata_Save();
+        metadata_dirty = false;
+    }
+
     return true;
 }
 
 /**
  * @brief Record current sensor/GPS/attitude data to flash
+ * @note Now waits for DMA completion to prevent write corruption
+ * @note Uses metadata dirty flag to reduce flash wear
  */
 bool DataLogger_RecordData(void) {
-    if (logger_status != LOGGER_RECORDING || !flash_initialized) return false;
+    if (logger_status != LOGGER_RECORDING || !flash_initialized) {
+        return false;
+    }
+
+    /* Check if previous write still in progress */
+    if (qspi_write_busy) {
+        return false;  /* Previous write not done, skip this record */
+    }
 
     uint32_t current_time = HAL_GetTick();
 
-    if (current_time - last_recording_attempt < RECORDING_INTERVAL_MS) return true;
+    /* Rate limiting */
+    if (current_time - last_recording_attempt < RECORDING_INTERVAL_MS) {
+        return true;
+    }
     last_recording_attempt = current_time;
 
+    /* Check flash space */
     if (current_write_address + sizeof(DataRecord_t) > DATA_AREA_SIZE) {
         DataLogger_StopRecording();
         return false;
     }
 
+    /* Pack data into record */
     PackDataRecord(&temp_record);
 
-    if (temp_record.timestamp_ms == 0) return false;
+    if (temp_record.timestamp_ms == 0) {
+        return false;
+    }
 
-    if (QSPI_Quad_Write_DMA((uint8_t*)&temp_record, current_write_address, sizeof(DataRecord_t)) != HAL_OK) {
+    /* Start DMA write */
+    qspi_write_busy = true;
+    qspi_write_error = false;
+
+    if (QSPI_Quad_Write_DMA((uint8_t*)&temp_record, current_write_address,
+                            sizeof(DataRecord_t)) != HAL_OK) {
+        qspi_write_busy = false;
         logger_status = LOGGER_ERROR;
         return false;
     }
 
+    /* Wait for DMA completion (with timeout) */
+    uint32_t start = HAL_GetTick();
+    while (qspi_write_busy && (HAL_GetTick() - start) < 100) {
+        /* Wait for completion or timeout */
+    }
+
+    if (qspi_write_busy || qspi_write_error) {
+        /* Timeout or error */
+        logger_status = LOGGER_ERROR;
+        return false;
+    }
+
+    /* Now safe to increment address (DMA complete) */
     current_write_address += sizeof(DataRecord_t);
     records_written++;
     last_record_time = current_time;
 
-    if (records_written % 50 == 0) {
-        Metadata_Save();
-    }
+    /* Mark metadata as dirty instead of immediate save */
+    metadata_dirty = true;
 
     return true;
 }
 
-void DataLogger_Update(void) { }
+/**
+ * @brief Update data logger - handles periodic metadata saves
+ * @note Call this from main loop to enable periodic metadata persistence
+ * @note Saves metadata every 10 seconds if dirty (much less flash wear than every 50 records)
+ */
+void DataLogger_Update(void) {
+    /* Periodically save metadata if dirty */
+    if (metadata_dirty && (HAL_GetTick() - last_metadata_save_time) > METADATA_SAVE_INTERVAL_MS) {
+        if (Metadata_Save()) {
+            metadata_dirty = false;
+            last_metadata_save_time = HAL_GetTick();
+        }
+    }
+}
 
 /**
  * @brief Get logger statistics
