@@ -14,6 +14,7 @@ typedef struct {
     volatile I2C_DMA_Device_t current_device;
     I2C_DMA_Callback_t callback;
     I2C_DMA_Arbiter_Stats_t stats;
+    uint32_t transaction_start_time;  /* For timeout detection */
 } I2C_DMA_Arbiter_State_t;
 
 /* Private variables */
@@ -22,6 +23,9 @@ static I2C_DMA_Arbiter_State_t arbiter_state = {
     .current_device = I2C_DMA_DEVICE_COUNT,
     .callback = NULL
 };
+
+/* Constants */
+#define I2C_DMA_TIMEOUT_MS  100  /* 100ms timeout for stuck DMA transfers */
 
 /* Private functions */
 
@@ -65,10 +69,14 @@ HAL_StatusTypeDef I2C_DMA_Arbiter_RequestTransfer(
             break;
     }
 
-    /* Check if arbiter is busy - non-preemptive design */
+    /* CRITICAL SECTION: Check and set busy atomically to prevent race condition */
+    __disable_irq();
+
+    /* Check if arbiter is busy - non-preemptive FCFS design */
     if (arbiter_state.busy) {
-        /* Arbiter busy - deny all requests regardless of priority */
-        /* Non-preemptive scheduling is simpler and more predictable */
+        __enable_irq();
+
+        /* Arbiter busy - deny all requests (first-come-first-served) */
         switch (device) {
             case I2C_DMA_DEVICE_MAG:
                 arbiter_state.stats.mag_conflicts++;
@@ -85,10 +93,14 @@ HAL_StatusTypeDef I2C_DMA_Arbiter_RequestTransfer(
         return HAL_BUSY;
     }
 
-    /* Arbiter is free - grant access */
+    /* Grant access - arbiter is free */
     arbiter_state.busy = true;
     arbiter_state.current_device = device;
     arbiter_state.callback = callback;
+    arbiter_state.transaction_start_time = HAL_GetTick();
+
+    __enable_irq();
+    /* END CRITICAL SECTION */
 
     /* Start DMA transfer */
     status = HAL_I2C_Mem_Read_DMA(hi2c, dev_address, mem_address,
@@ -157,6 +169,38 @@ void I2C_DMA_Arbiter_HandleError(I2C_HandleTypeDef *hi2c) {
     arbiter_state.busy = false;
     arbiter_state.current_device = I2C_DMA_DEVICE_COUNT;
     arbiter_state.callback = NULL;
+}
+
+/**
+ * @brief Watchdog function to detect stuck DMA transfers
+ * @retval true if timeout occurred and arbiter was reset
+ * @note Call this from main loop or periodic timer (every 10-50ms recommended)
+ * @note If a DMA transfer takes longer than I2C_DMA_TIMEOUT_MS, the arbiter
+ *       is forcibly released to prevent permanent bus lockup
+ */
+bool I2C_DMA_Arbiter_Watchdog(void) {
+    if (!arbiter_state.busy) {
+        return false;  /* Arbiter idle, no timeout possible */
+    }
+
+    uint32_t elapsed = HAL_GetTick() - arbiter_state.transaction_start_time;
+
+    if (elapsed > I2C_DMA_TIMEOUT_MS) {
+        /* Timeout detected - force release arbiter */
+        __disable_irq();
+        arbiter_state.busy = false;
+        arbiter_state.current_device = I2C_DMA_DEVICE_COUNT;
+        arbiter_state.callback = NULL;
+        __enable_irq();
+
+        /* Note: Could also reset I2C peripheral here if needed */
+        /* HAL_I2C_DeInit(&hi2c1); */
+        /* HAL_I2C_Init(&hi2c1); */
+
+        return true;  /* Timeout occurred */
+    }
+
+    return false;  /* No timeout */
 }
 
 /**
