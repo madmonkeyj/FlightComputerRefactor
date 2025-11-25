@@ -35,10 +35,12 @@
 #include "usb_commands.h"
 
 /* NEW MODULE INCLUDES - Navigation and Telemetry */
-#include "navigation_manager.h"   // AHRS + EKF coordinator
-#include "telemetry_manager.h"    // Telemetry coordination
-#include "lora_module.h"          // LoRa wireless
-#include "flight_manager.h"       // Top-level orchestrator
+// #include "navigation_manager.h"   // AHRS + EKF coordinator (disabled - requires incompatible sensor_system)
+// #include "telemetry_manager.h"    // Telemetry coordination (disabled - requires LoRa)
+// #include "lora_module.h"          // LoRa wireless (disabled - UART conflict with BLE)
+// #include "flight_manager.h"       // Top-level orchestrator (disabled - requires telemetry)
+// NOTE: All new navigation modules require sensor_system which uses different hardware
+// TODO: Create adapter or keep using existing sensor_manager + mahony_filter
 
 #include <math.h>
 #include <stdio.h>
@@ -67,7 +69,8 @@
 static uint32_t ble_test_counter = 0;
 static bool ble_initialized = false;
 
-/* NOTE: Mahony filter now managed internally by navigation_manager */
+/* Mahony Filter - Restored (navigation_manager disabled) */
+MahonyFilter_t mahony_filter;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -88,11 +91,12 @@ static bool NavProvider_IsValid(void);
 
 /**
  * @brief Navigation provider callback implementations
- * @note These adapt NavigationManager to DataLogger's NavigationProvider_t interface
+ * @note Using standalone Mahony filter (EKF disabled - sensor hardware mismatch)
+ * @note Position/velocity not available without EKF - returning false
  */
 static bool NavProvider_GetQuaternion(float quat[4]) {
     Quaternion_t q;
-    if (NavigationManager_GetAttitude(&q)) {
+    if (Mahony_GetQuaternion(&mahony_filter, &q) == HAL_OK) {
         quat[0] = q.q0;
         quat[1] = q.q1;
         quat[2] = q.q2;
@@ -103,15 +107,24 @@ static bool NavProvider_GetQuaternion(float quat[4]) {
 }
 
 static bool NavProvider_GetPositionNED(float pos[3]) {
-    return NavigationManager_GetPositionNED(&pos[0], &pos[1], &pos[2]);
+    // EKF disabled - no position estimate available
+    pos[0] = 0.0f;
+    pos[1] = 0.0f;
+    pos[2] = 0.0f;
+    return false;
 }
 
 static bool NavProvider_GetVelocityNED(float vel[3]) {
-    return NavigationManager_GetVelocityNED(&vel[0], &vel[1], &vel[2]);
+    // EKF disabled - no velocity estimate available
+    vel[0] = 0.0f;
+    vel[1] = 0.0f;
+    vel[2] = 0.0f;
+    return false;
 }
 
 static bool NavProvider_IsValid(void) {
-    return NavigationManager_IsHealthy();
+    // Only quaternion valid - position/velocity not available
+    return true;
 }
 
 /* Navigation provider structure */
@@ -219,17 +232,11 @@ int main(void)
       DebugPrint("ERROR: Sensor Manager init failed\r\n");
   }
 
-  // ===== NAVIGATION MANAGER INITIALIZATION =====
-  // This internally initializes:
-  //   - Mahony filter (500Hz AHRS)
-  //   - Navigation EKF (50Hz position/velocity)
-  //   - Motion detector
-  //   - Coordinate transform
-  if (NavigationManager_Init()) {
-      DebugPrint("Navigation Manager initialized (AHRS + EKF)\r\n");
-  } else {
-      DebugPrint("ERROR: Navigation Manager init failed\r\n");
-  }
+  // ===== MAHONY FILTER INITIALIZATION =====
+  // Restored - using standalone Mahony filter
+  // (NavigationManager disabled - requires incompatible sensor_system)
+  Mahony_Init(&mahony_filter, 500.0f, 1.0f, 0.0f);
+  DebugPrint("Mahony AHRS filter initialized (500 Hz)\r\n");
 
   // ===== GPS MODULE INITIALIZATION =====
   if (GPS_Init()) {
@@ -259,27 +266,35 @@ int main(void)
   }
 
   // ===== LORA MODULE INITIALIZATION =====
+  // DISABLED: LoRa on USART1 conflicts with BLE
+  // To enable: resolve UART conflict (move BLE to USART2 or use USART2 for LoRa)
+  // GPIO pins already configured: M0=PB13, M1=PB12, AUX=PB14
+  /*
   if (LoRa_Init()) {
       DebugPrint("LoRa module initialized\r\n");
   } else {
       DebugPrint("ERROR: LoRa init failed\r\n");
   }
+  */
 
   // ===== TELEMETRY MANAGER INITIALIZATION =====
+  // DISABLED: Requires LoRa module for transmission
+  /*
   if (TelemetryManager_Init()) {
       DebugPrint("Telemetry Manager initialized\r\n");
       TelemetryManager_SetRateLimit(5.0f);  // 5Hz telemetry
   } else {
       DebugPrint("ERROR: Telemetry Manager init failed\r\n");
   }
+  */
 
   // ===== DATA LOGGER INITIALIZATION =====
   if (DataLogger_Init()) {
       DebugPrint("Data Logger initialized successfully\r\n");
 
-      // Register navigation provider for EKF data logging
+      // Register navigation provider (Mahony filter only - no EKF)
       DataLogger_RegisterNavProvider(&nav_provider);
-      DebugPrint("Navigation provider registered (EKF integration)\r\n");
+      DebugPrint("Navigation provider registered (quaternion only - EKF disabled)\r\n");
 
       // Display flash status
       char status_buffer[200];
@@ -299,11 +314,15 @@ int main(void)
   }
 
   // ===== FLIGHT MANAGER INITIALIZATION (LAST) =====
+  // DISABLED: Requires telemetry_manager and lora_module
+  // Manual subsystem coordination used instead
+  /*
   if (FlightManager_Init()) {
       DebugPrint("Flight Manager initialized - system ready\r\n");
   } else {
       DebugPrint("ERROR: Flight Manager init failed\r\n");
   }
+  */
 
   DebugPrint("=== All systems initialized - entering main loop ===\r\n");
 
@@ -318,13 +337,14 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    // ===== FLIGHT MANAGER UPDATE =====
-    // This handles all subsystem timing internally:
-    //   - Sensor reads at 500Hz
-    //   - Navigation updates (AHRS 500Hz, EKF 50Hz)
-    //   - GPS integration as available
-    //   - Telemetry at 5Hz
-    FlightManager_Update();
+    // ===== NAVIGATION UPDATE =====
+    // Note: FlightManager disabled (requires telemetry)
+    // Note: NavigationManager disabled (requires incompatible sensor_system)
+    // Using existing sensor_manager + manual navigation updates
+    // TODO: Create sensor adapter or simplify navigation_manager
+
+    // GPS update
+    GPS_Update();
 
     // ===== CRITICAL REFACTORED INTEGRATION POINTS =====
 
@@ -416,25 +436,10 @@ void HAL_QSPI_ErrorCallback(QSPI_HandleTypeDef *hqspi) {
 }
 
 /**
- * @brief UART Tx Transfer completed callback
- * @note Required for LoRa module transmission tracking
+ * @note UART callbacks removed - already defined in ble_module.c
+ * @note For LoRa support: add UART routing in ble_module.c callbacks
+ * @note or create runtime selection between BLE/LoRa
  */
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-    // Assuming USART2 is used for LoRa (verify your hardware!)
-    if (huart->Instance == USART2) {
-        LoRa_TransmissionComplete(true);
-    }
-}
-
-/**
- * @brief UART error callback
- * @note Required for LoRa module error handling
- */
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == USART2) {
-        LoRa_TransmissionComplete(false);
-    }
-}
 
 /* USER CODE END 4 */
 
