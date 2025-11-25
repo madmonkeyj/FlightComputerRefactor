@@ -48,11 +48,6 @@ static bool data_transmission_enabled = true; /* Controls sensor data transmissi
 static uint32_t last_char_time = 0;
 static uint32_t char_timeout_ms = 2000;  /* 2 second timeout for incomplete commands */
 
-// Command debugging variables
-static volatile bool command_received_flag = false;
-static char last_command_received[64] = {0};
-static volatile bool response_sent_flag = false;
-
 /* Private function prototypes */
 static void ClearResponseBuffer(void);
 static bool SendBleCommand(const char* cmd, const char* expectedResponse, uint32_t timeout);
@@ -63,16 +58,6 @@ static void BLE_ProcessCommand(const char* command);
 static void BLE_ProcessIncompleteBuffer(void);
 static bool IsProtocolOverhead(const uint8_t* data, uint16_t length);
 static bool IsInCommandMode(void);
-
-bool BLE_GetLastCommand(char* command_buffer, size_t buffer_size) {
-    if (command_received_flag && command_buffer && buffer_size > 0) {
-        strncpy(command_buffer, last_command_received, buffer_size - 1);
-        command_buffer[buffer_size - 1] = '\0';
-        command_received_flag = false; // Clear flag
-        return true;
-    }
-    return false;
-}
 
 /**
  * @brief Check if received data is likely BLE protocol overhead
@@ -368,10 +353,6 @@ static void BLE_ProcessCommand(const char* command) {
         return;
     }
 
-    // Set flag and copy command for main loop debugging
-    strncpy(last_command_received, command, sizeof(last_command_received)-1);
-    command_received_flag = true;
-
     /* Convert to lowercase */
     char cmd_lower[64];
     strncpy(cmd_lower, command, sizeof(cmd_lower) - 1);
@@ -392,7 +373,6 @@ static void BLE_ProcessCommand(const char* command) {
         } else {
             BLE_SendResponse("ERROR: Failed to start recording");
         }
-        response_sent_flag = true;
     }
     else if (strcmp(cmd_lower, "stop") == 0) {
         // Stop data logging and resume BLE transmission
@@ -402,7 +382,6 @@ static void BLE_ProcessCommand(const char* command) {
         } else {
             BLE_SendResponse("ERROR: Failed to stop recording");
         }
-        response_sent_flag = true;
     }
     else if (strcmp(cmd_lower, "status") == 0) {
         // Get comprehensive status including data logger
@@ -423,7 +402,6 @@ static void BLE_ProcessCommand(const char* command) {
         }
 
         BLE_SendResponse(status_msg);
-        response_sent_flag = true;
     }
     else if (strcmp(cmd_lower, "erase") == 0) {
         // Manually erase flash data
@@ -432,12 +410,10 @@ static void BLE_ProcessCommand(const char* command) {
         } else {
             BLE_SendResponse("ERROR: Failed to erase flash");
         }
-        response_sent_flag = true;
     }
     else if (strcmp(cmd_lower, "help") == 0) {
         // List available commands
         BLE_SendResponse("Commands: start, stop, status, erase, help");
-        response_sent_flag = true;
     }
     else {
         // Check custom callback
@@ -446,7 +422,6 @@ static void BLE_ProcessCommand(const char* command) {
         } else {
             BLE_SendResponse("Unknown command - type 'help' for commands");
         }
-        response_sent_flag = true;
     }
 }
 

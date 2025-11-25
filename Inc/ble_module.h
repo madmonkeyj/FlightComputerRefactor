@@ -162,15 +162,6 @@ uint32_t BLE_GetTimeSinceLastActivity(void);
  */
 bool BLE_Configure_NoConfig(void);
 
-/**
- * @brief Get last processed command (for debugging)
- * @param command_buffer Buffer to store command
- * @param buffer_size Size of buffer
- * @return true if command was available
- * @note Clears the command flag after reading
- */
-bool BLE_GetLastCommand(char* command_buffer, size_t buffer_size);
-
 /* Internal callback for DMA idle line detection */
 /**
  * @brief BLE UART RX Event handler - called from unified HAL_UARTEx_RxEventCallback
