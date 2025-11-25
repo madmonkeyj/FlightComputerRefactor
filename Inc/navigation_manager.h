@@ -10,7 +10,7 @@
 #define NAVIGATION_MANAGER_H_
 
 #include "main.h"
-#include "sensor_system.h"  // For SensorData_t
+#include "sensor_adapter.h"  // For NavSensorData_t (adapter for actual hardware)
 #include "mahony_filter.h"
 #include "navigation_ekf.h"
 #include "gps_module.h"     // For GPS_Data_t
@@ -85,7 +85,7 @@ bool NavigationManager_Init(void);
  * @retval true if AHRS update successful
  * @retval false if update failed
  */
-bool NavigationManager_UpdateAHRS(const SensorData_t* sensors);
+bool NavigationManager_UpdateAHRS(const NavSensorData_t* sensors);
 
 /**
  * @brief Update Navigation EKF - call at 50Hz (decimated from AHRS)
@@ -94,7 +94,7 @@ bool NavigationManager_UpdateAHRS(const SensorData_t* sensors);
  * @retval false if update failed
  * @note Automatically handles timing decimation from AHRS rate
  */
-bool NavigationManager_UpdateNavigation(const SensorData_t* sensors);
+bool NavigationManager_UpdateNavigation(const NavSensorData_t* sensors);
 
 /**
  * @brief Update navigation with GPS data - call when GPS data available

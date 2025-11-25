@@ -33,6 +33,14 @@
 #include "ble_module.h"
 #include "data_logger.h"
 #include "usb_commands.h"
+
+/* NEW MODULE INCLUDES - Navigation and Telemetry */
+#include "sensor_adapter.h"       // Adapter: sensor_manager → navigation format
+#include "navigation_manager.h"   // AHRS + EKF coordinator (NOW WITH ADAPTER!)
+// #include "telemetry_manager.h"    // Telemetry coordination (disabled - requires LoRa)
+// #include "lora_module.h"          // LoRa wireless (disabled - UART conflict with BLE)
+// #include "flight_manager.h"       // Top-level orchestrator (disabled - requires telemetry)
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -56,12 +64,11 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-/* Mahony Filter - Global instance for data_logger access */
-MahonyFilter_t mahony_filter;
-
 /* BLE Test Variables */
 static uint32_t ble_test_counter = 0;
 static bool ble_initialized = false;
+
+/* NOTE: Mahony filter now managed internally by navigation_manager */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -69,10 +76,52 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 /* BLE Command Callback */
 static void BLE_CommandCallback(const char* command);
+
+/* Navigation Provider Callbacks for Data Logger */
+static bool NavProvider_GetQuaternion(float quat[4]);
+static bool NavProvider_GetPositionNED(float pos[3]);
+static bool NavProvider_GetVelocityNED(float vel[3]);
+static bool NavProvider_IsValid(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/**
+ * @brief Navigation provider callback implementations
+ * @note Using navigation_manager with full EKF integration!
+ */
+static bool NavProvider_GetQuaternion(float quat[4]) {
+    Quaternion_t q;
+    if (NavigationManager_GetAttitude(&q)) {
+        quat[0] = q.q0;
+        quat[1] = q.q1;
+        quat[2] = q.q2;
+        quat[3] = q.q3;
+        return true;
+    }
+    return false;
+}
+
+static bool NavProvider_GetPositionNED(float pos[3]) {
+    return NavigationManager_GetPositionNED(&pos[0], &pos[1], &pos[2]);
+}
+
+static bool NavProvider_GetVelocityNED(float vel[3]) {
+    return NavigationManager_GetVelocityNED(&vel[0], &vel[1], &vel[2]);
+}
+
+static bool NavProvider_IsValid(void) {
+    return NavigationManager_IsHealthy();
+}
+
+/* Navigation provider structure */
+static const NavigationProvider_t nav_provider = {
+    .get_quaternion = NavProvider_GetQuaternion,
+    .get_position_ned = NavProvider_GetPositionNED,
+    .get_velocity_ned = NavProvider_GetVelocityNED,
+    .is_valid = NavProvider_IsValid
+};
 
 /**
  * @brief BLE command callback - handles custom commands
@@ -149,22 +198,56 @@ int main(void)
   // Wait for USB CDC to be ready
   HAL_Delay(2000);
 
-  // ===== BLE MODULE TEST =====
-  // Initialize BLE module
+  DebugPrint("=== FlightComputer Full Navigation System ===\r\n");
+
+  // ===== SENSOR MANAGER INITIALIZATION =====
+  SensorManager_Config_t sensor_config = {
+      .imu_odr_hz = 1000,
+      .mag_odr_hz = 1000,
+      .baro_odr_hz = 100,
+      .highg_odr_hz = 50,
+      .main_loop_hz = 500,
+      .imu_accel_fs = 0,
+      .imu_gyro_fs = 0,
+      .use_mag = true,
+      .use_high_g = false,
+      .use_baro = true
+  };
+
+  if (SensorManager_Init(&sensor_config) == HAL_OK) {
+      DebugPrint("Sensor Manager initialized\r\n");
+  } else {
+      DebugPrint("ERROR: Sensor Manager init failed\r\n");
+  }
+
+  // ===== NAVIGATION MANAGER INITIALIZATION =====
+  // Full AHRS + EKF with sensor adapter for actual hardware
+  if (NavigationManager_Init()) {
+      DebugPrint("Navigation Manager initialized (AHRS 500Hz + EKF 50Hz)\r\n");
+  } else {
+      DebugPrint("ERROR: Navigation Manager init failed\r\n");
+  }
+
+  // ===== GPS MODULE INITIALIZATION =====
+  if (GPS_Init()) {
+      DebugPrint("GPS module initialized\r\n");
+  } else {
+      DebugPrint("ERROR: GPS init failed\r\n");
+  }
+
+  // ===== BLE MODULE INITIALIZATION =====
   if (BLE_Init()) {
       ble_initialized = true;
       DebugPrint("BLE Module initialized successfully\r\n");
 
       // Register command callback for custom commands
       BLE_RegisterCommandCallback(BLE_CommandCallback);
-      DebugPrint("BLE Command callback registered\r\n");
 
       // Enable data transmission
       BLE_SetDataTransmissionEnabled(true);
-      DebugPrint("BLE Data transmission enabled\r\n");
 
       // Send welcome message
-      BLE_SendResponse("=== FlightComputer BLE Test ===\r\n");
+      BLE_SendResponse("=== FlightComputer Full Navigation ===\r\n");
       BLE_SendResponse("Built-in commands: start, stop, status, help, erase\r\n");
       BLE_SendResponse("Custom commands: test, info\r\n");
       BLE_SendResponse("Ready!\r\n");
@@ -172,15 +255,36 @@ int main(void)
       DebugPrint("ERROR: BLE Module initialization failed!\r\n");
   }
 
-  // ===== MAHONY FILTER INITIALIZATION =====
-  // Initialize Mahony AHRS filter (500 Hz update rate, Kp=1.0, Ki=0.0)
-  Mahony_Init(&mahony_filter, 500.0f, 1.0f, 0.0f);
-  DebugPrint("Mahony AHRS filter initialized (500 Hz)\r\n");
+  // ===== LORA MODULE INITIALIZATION =====
+  // DISABLED: LoRa on USART1 conflicts with BLE
+  // To enable: resolve UART conflict (move BLE to USART2 or use USART2 for LoRa)
+  // GPIO pins already configured: M0=PB13, M1=PB12, AUX=PB14
+  /*
+  if (LoRa_Init()) {
+      DebugPrint("LoRa module initialized\r\n");
+  } else {
+      DebugPrint("ERROR: LoRa init failed\r\n");
+  }
+  */
+
+  // ===== TELEMETRY MANAGER INITIALIZATION =====
+  // DISABLED: Requires LoRa module for transmission
+  /*
+  if (TelemetryManager_Init()) {
+      DebugPrint("Telemetry Manager initialized\r\n");
+      TelemetryManager_SetRateLimit(5.0f);  // 5Hz telemetry
+  } else {
+      DebugPrint("ERROR: Telemetry Manager init failed\r\n");
+  }
+  */
 
   // ===== DATA LOGGER INITIALIZATION =====
-  // Initialize data logger and QSPI flash
   if (DataLogger_Init()) {
       DebugPrint("Data Logger initialized successfully\r\n");
+
+      // Register navigation provider (AHRS + EKF integration)
+      DataLogger_RegisterNavProvider(&nav_provider);
+      DebugPrint("Navigation provider registered (quaternion + position + velocity)\r\n");
 
       // Display flash status
       char status_buffer[200];
@@ -193,12 +297,24 @@ int main(void)
   }
 
   // ===== USB COMMANDS INITIALIZATION =====
-  // Initialize USB command interface for downloading data
   if (USBCommands_Init()) {
       DebugPrint("USB Commands initialized successfully\r\n");
   } else {
       DebugPrint("ERROR: USB Commands initialization failed!\r\n");
   }
+
+  // ===== FLIGHT MANAGER INITIALIZATION (LAST) =====
+  // DISABLED: Requires telemetry_manager and lora_module
+  // Manual subsystem coordination used instead
+  /*
+  if (FlightManager_Init()) {
+      DebugPrint("Flight Manager initialized - system ready\r\n");
+  } else {
+      DebugPrint("ERROR: Flight Manager init failed\r\n");
+  }
+  */
+
+  DebugPrint("=== All systems initialized - entering main loop ===\r\n");
 
   /* USER CODE END 2 */
 
@@ -211,25 +327,43 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    // ===== BLE MODULE TEST LOOP =====
-    if (ble_initialized) {
-        // CRITICAL: Call BLE_Update() every loop iteration
-        // This handles UART reception, command processing, and timeout
-        BLE_Update();
+    // ===== NAVIGATION UPDATE =====
+    // Read sensors via adapter and update navigation
+    NavSensorData_t nav_sensor_data;
+    if (SensorAdapter_Read(&nav_sensor_data)) {
+        // Update AHRS at 500Hz
+        NavigationManager_UpdateAHRS(&nav_sensor_data);
 
-        // ===== DATA LOGGER UPDATE =====
-        // Record data if logger is in RECORDING state
-        // This function handles rate limiting internally (based on RECORDING_INTERVAL_MS)
-        if (DataLogger_IsRecording()) {
-            DataLogger_RecordData();
-        }
+        // Update EKF at 50Hz (decimated internally)
+        NavigationManager_UpdateNavigation(&nav_sensor_data);
+    }
+
+    // GPS update and integration with EKF
+    GPS_Update();
+    GPS_Data_t gps_data;
+    if (GPS_GetData(&gps_data) == HAL_OK) {
+        NavigationManager_UpdateGPS(&gps_data);
+    }
+
+    // ===== CRITICAL REFACTORED INTEGRATION POINTS =====
+
+    // Task 1: I2C arbiter watchdog (prevent deadlocks)
+    if (I2C_DMA_Arbiter_Watchdog()) {
+        DebugPrint("WARNING: I2C arbiter timeout recovery\r\n");
+    }
+
+    // Task 2: Data logger periodic update (metadata saves every 10s)
+    DataLogger_Update();
+
+    // ===== BLE MODULE UPDATE =====
+    if (ble_initialized) {
+        BLE_Update();
     }
 
     // ===== USB COMMANDS UPDATE =====
-    // Process USB commands (download, status, etc.)
     USBCommands_Update();
 
-    // Small delay to prevent CPU saturation (optional)
+    // Small delay to prevent CPU saturation
     HAL_Delay(1);
 
   }
@@ -283,6 +417,28 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+ * @brief QSPI Tx Transfer completed callback
+ * @note Required for Task 2 - Data Logger DMA safety
+ */
+void HAL_QSPI_TxCpltCallback(QSPI_HandleTypeDef *hqspi) {
+    DataLogger_QSPI_WriteComplete();
+}
+
+/**
+ * @brief QSPI error callback
+ * @note Required for Task 2 - Data Logger DMA safety
+ */
+void HAL_QSPI_ErrorCallback(QSPI_HandleTypeDef *hqspi) {
+    DataLogger_QSPI_WriteError();
+}
+
+/**
+ * @note UART callbacks removed - already defined in ble_module.c
+ * @note For LoRa support: add UART routing in ble_module.c callbacks
+ * @note or create runtime selection between BLE/LoRa
+ */
 
 /* USER CODE END 4 */
 

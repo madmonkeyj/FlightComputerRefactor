@@ -1,13 +1,15 @@
 /**
   ******************************************************************************
   * @file    navigation_manager.c
-  * @brief   Navigation Manager implementation - Simplified and cleaned
+  * @brief   Navigation Manager implementation - Adapted for sensor_manager
+  * @note    Uses sensor_adapter to bridge with actual hardware (ICM42688/MMC5983MA/BMP581)
   ******************************************************************************
   */
 
 #include "navigation_manager.h"
 #include "nav_config.h"
 #include "navigation_ekf.h"
+#include "sensor_adapter.h"    // Adapter for sensor_manager → navigation format
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -87,8 +89,8 @@ static bool CalibrateAccelerometer(void) {
     const int CALIBRATION_SAMPLES = nav_ctx.config.calibration.samples;
 
     for (int i = 0; i < CALIBRATION_SAMPLES; i++) {
-        SensorData_t cal_data;
-        if (SensorSystem_Read(&cal_data) && cal_data.accel_valid) {
+        NavSensorData_t cal_data;
+        if (SensorAdapter_Read(&cal_data) && cal_data.accel_valid) {
             accel_sum[0] += cal_data.accel[0];
             accel_sum[1] += cal_data.accel[1];
             accel_sum[2] += cal_data.accel[2];
@@ -196,7 +198,7 @@ bool NavigationManager_Init(void) {
 /**
  * @brief Update AHRS with sensor data
  */
-bool NavigationManager_UpdateAHRS(const SensorData_t* sensors) {
+bool NavigationManager_UpdateAHRS(const NavSensorData_t* sensors) {
     if (!sensors || nav_ctx.state < NAV_STATE_AHRS_ONLY) {
         return false;
     }
@@ -247,7 +249,7 @@ bool NavigationManager_UpdateAHRS(const SensorData_t* sensors) {
 /**
  * @brief Update Navigation EKF
  */
-bool NavigationManager_UpdateNavigation(const SensorData_t* sensors) {
+bool NavigationManager_UpdateNavigation(const NavSensorData_t* sensors) {
     if (!sensors || nav_ctx.state != NAV_STATE_OPERATIONAL || !nav_ctx.solution.ahrs_valid) {
         return false;
     }
@@ -363,8 +365,8 @@ bool NavigationManager_UpdateGPS(const GPS_Data_t* gps_data) {
         nav_ctx.solution.gps_ref_alt = reference_altitude;
 
         /* Calibrate barometer and accelerometer */
-        SensorData_t current_sensors;
-        if (SensorSystem_Read(&current_sensors) && current_sensors.baro_valid) {
+        NavSensorData_t current_sensors;
+        if (SensorAdapter_Read(&current_sensors) && current_sensors.baro_valid) {
         	nav_ctx.calibration.baro_ref_pressure = current_sensors.pressure *
         	                                       powf(1.0f - (reference_altitude / 44330.0f), -5.255f);
             nav_ctx.calibration.baro_calibrated = true;
