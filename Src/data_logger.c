@@ -10,7 +10,6 @@
 #include "ble_module.h"
 #include "gps_module.h"
 #include "sensor_manager.h"
-#include "mahony_filter.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -46,8 +45,8 @@ static uint32_t last_metadata_save_time = 0;
 /* Temporary record buffer */
 static DataRecord_t temp_record;
 
-/* External Mahony filter instance */
-extern MahonyFilter_t mahony_filter;
+/* Navigation provider interface (optional) */
+static const NavigationProvider_t* nav_provider = NULL;
 
 /**
  * @brief Pack data into 192-byte record structure
@@ -94,16 +93,46 @@ static void PackDataRecord(DataRecord_t* record) {
         record->gps_hdop = 99.9f;
     }
 
-    // === MAHONY ATTITUDE ===
-    Quaternion_t quat;
-    if (Mahony_GetQuaternion(&mahony_filter, &quat) == HAL_OK) {
-        record->quat[0] = quat.q0;
-        record->quat[1] = quat.q1;
-        record->quat[2] = quat.q2;
-        record->quat[3] = quat.q3;
-    }
+    // === NAVIGATION DATA (via provider interface) ===
+    if (nav_provider != NULL) {
+        // Get quaternion attitude
+        float quat[4] = {0};
+        if (nav_provider->get_quaternion && nav_provider->get_quaternion(quat)) {
+            record->quat[0] = quat[0];
+            record->quat[1] = quat[1];
+            record->quat[2] = quat[2];
+            record->quat[3] = quat[3];
+        }
 
-    record->nav_valid = gps_valid ? 1 : 0;
+        // Get position NED
+        if (nav_provider->get_position_ned && nav_provider->get_position_ned(record->pos_ned)) {
+            // Position successfully retrieved
+        }
+
+        // Get velocity NED
+        if (nav_provider->get_velocity_ned && nav_provider->get_velocity_ned(record->vel_ned)) {
+            // Velocity successfully retrieved
+        }
+
+        // Get navigation validity
+        if (nav_provider->is_valid) {
+            record->nav_valid = nav_provider->is_valid() ? 1 : 0;
+        } else {
+            record->nav_valid = gps_valid ? 1 : 0;
+        }
+    } else {
+        // No navigation provider - use GPS validity only
+        record->nav_valid = gps_valid ? 1 : 0;
+
+        // Zero out navigation fields
+        for (int i = 0; i < 4; i++) {
+            record->quat[i] = 0.0f;
+        }
+        for (int i = 0; i < 3; i++) {
+            record->pos_ned[i] = 0.0f;
+            record->vel_ned[i] = 0.0f;
+        }
+    }
 
     // Fill unused EKF fields with NAN
     for (int i = 0; i < 3; i++) {
@@ -116,6 +145,16 @@ static void PackDataRecord(DataRecord_t* record) {
         record->accel_ned[i] = NAN;
     }
     record->motion_state = 3;
+}
+
+/**
+ * @brief Register navigation data provider
+ * @param provider Pointer to navigation provider structure (or NULL to disable)
+ * @note This decouples data_logger from specific navigation implementations
+ * @note Provider can be Mahony filter, EKF, or any other navigation system
+ */
+void DataLogger_RegisterNavProvider(const NavigationProvider_t* provider) {
+    nav_provider = provider;
 }
 
 /**
