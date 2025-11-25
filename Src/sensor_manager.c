@@ -32,6 +32,10 @@ static uint8_t highg_decimation_counter = 0;
 static uint8_t baro_decimation_factor = 5;   /* Calculated from config in Init() */
 static uint8_t highg_decimation_factor = 10; /* Calculated from config in Init() */
 
+/* Last valid sensor readings for decimated sensors (moved from function scope) */
+static BMP581_Data_t last_valid_baro_data = {0};
+static H3LIS331DL_Data_t last_valid_highg_data = {0};
+
 /* Sensor scaling constants */
 /* ICM42688 IMU scaling factors */
 #define ICM42688_GYRO_SCALE_2000DPS     16.4f       /* LSB per deg/s at ±2000dps */
@@ -223,8 +227,6 @@ HAL_StatusTypeDef SensorManager_ReadRaw(SensorManager_RawData_t *data) {
 
     /* DECIMATE BARO to target rate */
     /* Decimation factor calculated from config in SensorManager_Init() */
-    static BMP581_Data_t last_valid_baro_data = {0};
-
     if (config.use_baro) {
         if (baro_decimation_counter++ >= baro_decimation_factor) {
             baro_decimation_counter = 0;
@@ -453,4 +455,18 @@ void SensorManager_GetMahonyData(const SensorManager_RawData_t *raw,
     *mx = (raw->mag_x / MMC5983MA_MAG_SCALE) * GAUSS_TO_MICROTESLA;
     *my = (raw->mag_y / MMC5983MA_MAG_SCALE) * GAUSS_TO_MICROTESLA;
     *mz = (raw->mag_z / MMC5983MA_MAG_SCALE) * GAUSS_TO_MICROTESLA;
+}
+
+/**
+ * @brief Reset sensor manager state (for testing/re-initialization)
+ * @note Clears cached sensor data and resets decimation counters
+ */
+void SensorManager_ResetState(void) {
+    memset(&last_valid_baro_data, 0, sizeof(BMP581_Data_t));
+    memset(&last_valid_highg_data, 0, sizeof(H3LIS331DL_Data_t));
+    baro_decimation_counter = 0;
+    highg_decimation_counter = 0;
+    memset(&sensor_status, 0, sizeof(SensorManager_Status_t));
+    memset(&latest_data, 0, sizeof(SensorManager_RawData_t));
+    last_read_time_us = 0;
 }

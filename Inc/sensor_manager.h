@@ -116,4 +116,10 @@ void SensorManager_GetMahonyData(const SensorManager_RawData_t *raw,
                                   float *ax, float *ay, float *az,
                                   float *mx, float *my, float *mz);
 
+/**
+ * @brief Reset sensor manager state (for testing/re-initialization)
+ * @note Clears cached sensor data and resets decimation counters
+ */
+void SensorManager_ResetState(void);
+
 #endif /* SENSOR_MANAGER_H_ */
