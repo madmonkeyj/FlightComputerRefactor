@@ -341,7 +341,7 @@ int main(void)
     // GPS update and integration with EKF
     GPS_Update();
     GPS_Data_t gps_data;
-    if (GPS_GetData(&gps_data) == HAL_OK) {
+    if (GPS_GetCurrentData(&gps_data)) {
         NavigationManager_UpdateGPS(&gps_data);
     }
 
@@ -419,25 +419,10 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 
 /**
- * @brief QSPI Tx Transfer completed callback
- * @note Required for Task 2 - Data Logger DMA safety
- */
-void HAL_QSPI_TxCpltCallback(QSPI_HandleTypeDef *hqspi) {
-    DataLogger_QSPI_WriteComplete();
-}
-
-/**
- * @brief QSPI error callback
- * @note Required for Task 2 - Data Logger DMA safety
- */
-void HAL_QSPI_ErrorCallback(QSPI_HandleTypeDef *hqspi) {
-    DataLogger_QSPI_WriteError();
-}
-
-/**
- * @note UART callbacks removed - already defined in ble_module.c
- * @note For LoRa support: add UART routing in ble_module.c callbacks
- * @note or create runtime selection between BLE/LoRa
+ * @note HAL callbacks are defined in their respective modules:
+ * @note - QSPI callbacks: defined in quadspi.c (calls DataLogger_QSPI_WriteComplete/Error)
+ * @note - UART callbacks: defined in ble_module.c (for BLE communication)
+ * @note - For LoRa support: add UART routing in ble_module.c or create runtime selection
  */
 
 /* USER CODE END 4 */

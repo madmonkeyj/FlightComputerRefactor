@@ -14,6 +14,8 @@
 #define WRITE_STATUS_REG2_CMD 0x31  // Winbond specific
 
 /* USER CODE BEGIN 0 */
+#include "data_logger.h"  // For DataLogger callbacks
+
 static void QSPI_ResetMemory(void);
 static uint8_t QSPI_WriteEnable(void);
 static uint8_t QSPI_EnterQuadMode(void);
@@ -438,9 +440,19 @@ uint8_t QSPI_AutoPoll_IT(void)
   return qspi_tx_complete ? HAL_OK : HAL_TIMEOUT;
 }
 
-void HAL_QSPI_TxCpltCallback(QSPI_HandleTypeDef *hqspi) { qspi_tx_complete = 1; }
-void HAL_QSPI_ErrorCallback(QSPI_HandleTypeDef *hqspi) { qspi_error = 1; }
-void HAL_QSPI_StatusMatchCallback(QSPI_HandleTypeDef *hqspi) { qspi_tx_complete = 1; }
+void HAL_QSPI_TxCpltCallback(QSPI_HandleTypeDef *hqspi) {
+    qspi_tx_complete = 1;
+    DataLogger_QSPI_WriteComplete();  // Notify data logger
+}
+
+void HAL_QSPI_ErrorCallback(QSPI_HandleTypeDef *hqspi) {
+    qspi_error = 1;
+    DataLogger_QSPI_WriteError();  // Notify data logger
+}
+
+void HAL_QSPI_StatusMatchCallback(QSPI_HandleTypeDef *hqspi) {
+    qspi_tx_complete = 1;
+}
 
 uint8_t QSPI_Read_Std(uint8_t *buffer, uint32_t address, uint32_t size)
 {

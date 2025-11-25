@@ -80,15 +80,16 @@ bool SensorAdapter_Read(NavSensorData_t* nav_data) {
         return false;
     }
 
-    // Read raw sensor data
+    // Read raw sensor data for validity flags
     HAL_StatusTypeDef status = SensorManager_ReadRaw(&raw_data);
     if (status != HAL_OK) {
         failed_conversions++;
         return false;
     }
 
-    // Get scaled data
-    if (!SensorManager_GetScaledData(&raw_data, &scaled_data)) {
+    // Read scaled data
+    status = SensorManager_ReadScaled(&scaled_data);
+    if (status != HAL_OK) {
         failed_conversions++;
         return false;
     }
