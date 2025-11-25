@@ -35,12 +35,11 @@
 #include "usb_commands.h"
 
 /* NEW MODULE INCLUDES - Navigation and Telemetry */
-// #include "navigation_manager.h"   // AHRS + EKF coordinator (disabled - requires incompatible sensor_system)
+#include "sensor_adapter.h"       // Adapter: sensor_manager → navigation format
+#include "navigation_manager.h"   // AHRS + EKF coordinator (NOW WITH ADAPTER!)
 // #include "telemetry_manager.h"    // Telemetry coordination (disabled - requires LoRa)
 // #include "lora_module.h"          // LoRa wireless (disabled - UART conflict with BLE)
 // #include "flight_manager.h"       // Top-level orchestrator (disabled - requires telemetry)
-// NOTE: All new navigation modules require sensor_system which uses different hardware
-// TODO: Create adapter or keep using existing sensor_manager + mahony_filter
 
 #include <math.h>
 #include <stdio.h>
@@ -69,8 +68,7 @@
 static uint32_t ble_test_counter = 0;
 static bool ble_initialized = false;
 
-/* Mahony Filter - Restored (navigation_manager disabled) */
-MahonyFilter_t mahony_filter;
+/* NOTE: Mahony filter now managed internally by navigation_manager */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -91,12 +89,11 @@ static bool NavProvider_IsValid(void);
 
 /**
  * @brief Navigation provider callback implementations
- * @note Using standalone Mahony filter (EKF disabled - sensor hardware mismatch)
- * @note Position/velocity not available without EKF - returning false
+ * @note Using navigation_manager with full EKF integration!
  */
 static bool NavProvider_GetQuaternion(float quat[4]) {
     Quaternion_t q;
-    if (Mahony_GetQuaternion(&mahony_filter, &q) == HAL_OK) {
+    if (NavigationManager_GetAttitude(&q)) {
         quat[0] = q.q0;
         quat[1] = q.q1;
         quat[2] = q.q2;
@@ -107,24 +104,15 @@ static bool NavProvider_GetQuaternion(float quat[4]) {
 }
 
 static bool NavProvider_GetPositionNED(float pos[3]) {
-    // EKF disabled - no position estimate available
-    pos[0] = 0.0f;
-    pos[1] = 0.0f;
-    pos[2] = 0.0f;
-    return false;
+    return NavigationManager_GetPositionNED(&pos[0], &pos[1], &pos[2]);
 }
 
 static bool NavProvider_GetVelocityNED(float vel[3]) {
-    // EKF disabled - no velocity estimate available
-    vel[0] = 0.0f;
-    vel[1] = 0.0f;
-    vel[2] = 0.0f;
-    return false;
+    return NavigationManager_GetVelocityNED(&vel[0], &vel[1], &vel[2]);
 }
 
 static bool NavProvider_IsValid(void) {
-    // Only quaternion valid - position/velocity not available
-    return true;
+    return NavigationManager_IsHealthy();
 }
 
 /* Navigation provider structure */
@@ -232,11 +220,13 @@ int main(void)
       DebugPrint("ERROR: Sensor Manager init failed\r\n");
   }
 
-  // ===== MAHONY FILTER INITIALIZATION =====
-  // Restored - using standalone Mahony filter
-  // (NavigationManager disabled - requires incompatible sensor_system)
-  Mahony_Init(&mahony_filter, 500.0f, 1.0f, 0.0f);
-  DebugPrint("Mahony AHRS filter initialized (500 Hz)\r\n");
+  // ===== NAVIGATION MANAGER INITIALIZATION =====
+  // Full AHRS + EKF with sensor adapter for actual hardware
+  if (NavigationManager_Init()) {
+      DebugPrint("Navigation Manager initialized (AHRS 500Hz + EKF 50Hz)\r\n");
+  } else {
+      DebugPrint("ERROR: Navigation Manager init failed\r\n");
+  }
 
   // ===== GPS MODULE INITIALIZATION =====
   if (GPS_Init()) {
@@ -292,9 +282,9 @@ int main(void)
   if (DataLogger_Init()) {
       DebugPrint("Data Logger initialized successfully\r\n");
 
-      // Register navigation provider (Mahony filter only - no EKF)
+      // Register navigation provider (AHRS + EKF integration)
       DataLogger_RegisterNavProvider(&nav_provider);
-      DebugPrint("Navigation provider registered (quaternion only - EKF disabled)\r\n");
+      DebugPrint("Navigation provider registered (quaternion + position + velocity)\r\n");
 
       // Display flash status
       char status_buffer[200];
@@ -338,13 +328,22 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
     // ===== NAVIGATION UPDATE =====
-    // Note: FlightManager disabled (requires telemetry)
-    // Note: NavigationManager disabled (requires incompatible sensor_system)
-    // Using existing sensor_manager + manual navigation updates
-    // TODO: Create sensor adapter or simplify navigation_manager
+    // Read sensors via adapter and update navigation
+    NavSensorData_t nav_sensor_data;
+    if (SensorAdapter_Read(&nav_sensor_data)) {
+        // Update AHRS at 500Hz
+        NavigationManager_UpdateAHRS(&nav_sensor_data);
 
-    // GPS update
+        // Update EKF at 50Hz (decimated internally)
+        NavigationManager_UpdateNavigation(&nav_sensor_data);
+    }
+
+    // GPS update and integration with EKF
     GPS_Update();
+    GPS_Data_t gps_data;
+    if (GPS_GetData(&gps_data) == HAL_OK) {
+        NavigationManager_UpdateGPS(&gps_data);
+    }
 
     // ===== CRITICAL REFACTORED INTEGRATION POINTS =====
 
