@@ -352,6 +352,252 @@ typedef struct {
 - Code outside these sections gets overwritten
 - **ALWAYS** place custom code in USER CODE sections in HAL-generated files
 
+### 11. Navigation Provider Interface Pattern
+
+**Decouples data logger from specific navigation implementations:**
+
+```c
+// In data_logger.h
+typedef struct {
+    bool (*get_quaternion)(float quat[4]);
+    bool (*get_position_ned)(float pos[3]);
+    bool (*get_velocity_ned)(float vel[3]);
+    bool (*is_valid)(void);
+} NavigationProvider_t;
+
+void DataLogger_RegisterNavProvider(const NavigationProvider_t* provider);
+```
+
+**Benefits:**
+- Data logger works with Mahony filter, EKF, or any navigation system
+- No extern dependencies between modules
+- Easy to swap navigation algorithms
+- NULL provider allowed for testing
+- **See:** data_logger.h for implementation
+
+**Usage Example:**
+```c
+// Wrapper functions for Mahony filter
+bool My_Mahony_GetQuaternion(float quat[4]) {
+    Quaternion_t q;
+    if (Mahony_GetQuaternion(&mahony_filter, &q) == HAL_OK) {
+        quat[0] = q.q0;
+        quat[1] = q.q1;
+        quat[2] = q.q2;
+        quat[3] = q.q3;
+        return true;
+    }
+    return false;
+}
+
+// Register provider
+NavigationProvider_t mahony_provider = {
+    .get_quaternion = My_Mahony_GetQuaternion,
+    // ... other callbacks
+};
+DataLogger_RegisterNavProvider(&mahony_provider);
+```
+
+### 12. Sensor Calibration Framework
+
+**Optional calibration support for improved accuracy:**
+
+```c
+// In sensor_manager.h
+typedef struct {
+    float gyro_bias[3];          // rad/s
+    bool gyro_bias_valid;
+
+    float accel_offset[3];       // g
+    float accel_scale[3];        // scale factor
+    bool accel_cal_valid;
+
+    float mag_offset[3];         // Gauss (hard iron)
+    float mag_scale[3][3];       // 3x3 matrix (soft iron)
+    bool mag_cal_valid;
+} SensorCalibration_t;
+
+void SensorManager_SetCalibration(const SensorCalibration_t* cal);
+bool SensorManager_GetCalibration(SensorCalibration_t* cal);
+```
+
+**Features:**
+- Disabled by default - system works without calibration
+- Pass NULL to `SensorManager_SetCalibration()` to disable
+- Each sensor type has independent validity flag
+- Applied automatically in `SensorManager_GetMahonyData()`
+- Zero overhead when disabled
+- **See:** sensor_manager.h for full API
+
+**Calibration Types:**
+1. **Gyro:** Bias correction (subtract bias vector)
+2. **Accel:** Offset removal + scale factor
+3. **Mag:** Hard iron (offset) + soft iron (3x3 matrix) compensation
+
+### 13. Critical Sections for Race Prevention
+
+**Use atomic operations for shared state:**
+
+```c
+// Example from i2c_dma_arbiter.c
+__disable_irq();
+if (arbiter_state.busy) {
+    __enable_irq();
+    return HAL_BUSY;
+}
+arbiter_state.busy = true;
+arbiter_state.current_device = device;
+__enable_irq();
+```
+
+**When to use:**
+- Checking and setting flags in interrupt context
+- Modifying shared state from multiple contexts
+- Arbiter/scheduler implementations
+- **Critical:** Keep critical sections as short as possible
+- **See:** i2c_dma_arbiter.c:183-195
+
+### 14. Overflow Tracking for Extended Timers
+
+**GetMicros() with overflow detection:**
+
+```c
+static uint32_t us_high_word = 0;
+static uint32_t last_cyccnt = 0;
+static uint32_t cycles_per_us = 0;
+
+static inline uint32_t GetMicros(void) {
+    uint32_t cyccnt = DWT->CYCCNT;
+
+    /* Detect overflow */
+    if (cyccnt < last_cyccnt) {
+        us_high_word += (0xFFFFFFFFU / cycles_per_us) + 1;
+    }
+
+    last_cyccnt = cyccnt;
+    return us_high_word + (cyccnt / cycles_per_us);
+}
+```
+
+**Benefits:**
+- Extends range from ~25 seconds to ~71 minutes at 170MHz
+- Still uses unsigned arithmetic for correct delta calculations
+- No performance impact (inline function)
+- **See:** sensor_manager.c:97-109
+
+### 15. Metadata Dirty Flags for Flash Wear
+
+**Reduce flash erase cycles with dirty flag pattern:**
+
+```c
+static bool metadata_dirty = false;
+static uint32_t last_metadata_save_time = 0;
+#define METADATA_SAVE_INTERVAL_MS  10000  // 10 seconds
+
+// Mark dirty instead of immediate save
+metadata_dirty = true;
+
+// In periodic update function
+void DataLogger_Update(void) {
+    if (metadata_dirty && (HAL_GetTick() - last_metadata_save_time) > METADATA_SAVE_INTERVAL_MS) {
+        if (Metadata_Save()) {
+            metadata_dirty = false;
+            last_metadata_save_time = HAL_GetTick();
+        }
+    }
+}
+```
+
+**Impact:**
+- Reduced metadata saves from 180/flight to 3/flight
+- Flash lifespan increased from 555 to 33,000 flights (60x improvement)
+- **See:** data_logger.c:42-44, 288-296
+
+## Error Handling Standards
+
+**Standard error codes and patterns are documented in `Inc/error_codes.h`**
+
+### Key Principles
+
+1. **Always validate pointer parameters** before dereferencing
+2. **Always use timeouts** for blocking operations (never infinite wait)
+3. **Always check HAL return values**, especially `HAL_BUSY` for DMA
+4. **Always check validity flags** before using sensor data
+5. **Always implement graceful degradation** on sensor failures
+6. **Always track error counts** for diagnostics
+
+### Module-Specific Error Codes
+
+Each module has error codes in 0x1000-offset ranges:
+- **I2C Arbiter:** 0x1000-0x1FFF
+- **Data Logger:** 0x2000-0x2FFF
+- **Sensor Manager:** 0x3000-0x3FFF
+- **GPS Module:** 0x4000-0x4FFF
+- **BLE Module:** 0x5000-0x5FFF
+- **Mahony Filter:** 0x6000-0x6FFF
+
+**See:** `Inc/error_codes.h` for complete documentation of error handling patterns
+
+## Known Limitations and Constraints
+
+### 1. GetMicros Wraparound (~71 minutes)
+
+**Issue:** Microsecond timer wraps at 2^32 µs ≈ 71.6 minutes
+
+**Mitigation:**
+- Unsigned arithmetic handles deltas correctly for intervals < 71 min
+- Most operations complete well within this timeframe
+- Sufficient for individual flight sessions
+- Consider using HAL_GetTick() (milliseconds) for longer intervals
+
+**Code:** sensor_manager.c:97-109
+
+### 2. I2C DMA Arbiter Timeout (100ms)
+
+**Issue:** Arbiter releases bus after 100ms to prevent permanent locks
+
+**Mitigation:**
+- Watchdog function `I2C_DMA_Arbiter_Watchdog()` must be called periodically
+- Call from main loop every 10-50ms
+- Failed transfers increment error counters
+- System continues operation after timeout
+
+**Code:** i2c_dma_arbiter.c:224-240
+
+### 3. Flash Metadata Erase Cycles
+
+**Issue:** Flash sectors have limited erase cycles (typically 100K)
+
+**Mitigation:**
+- Dirty flag pattern reduces saves from 180 to 3 per 30-min flight
+- Estimated 33,000 flights before wear-out
+- Metadata sector at end of flash (easily replaceable)
+
+**Code:** data_logger.c:42-44, 288-296
+
+### 4. DMA Completion Wait (100ms timeout)
+
+**Issue:** Data logger waits for DMA completion before next write
+
+**Mitigation:**
+- 100ms timeout prevents infinite blocking
+- Timeout triggers error state
+- Previous record skipped on timeout
+- Error counters track failures
+
+**Code:** data_logger.c:260-270
+
+### 5. Navigation Provider Interface Overhead
+
+**Issue:** Function pointer calls have slight overhead vs direct calls
+
+**Mitigation:**
+- Negligible impact on 100Hz data logging
+- Benefits of modularity outweigh performance cost
+- Can be optimized later if needed
+
+**Code:** data_logger.c:96-135
+
 ## Critical Implementation Details
 
 ### Timing and Real-Time Constraints

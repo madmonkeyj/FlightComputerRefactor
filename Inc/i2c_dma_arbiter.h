@@ -1,8 +1,9 @@
 /**
   ******************************************************************************
   * @file    i2c_dma_arbiter.h
-  * @brief   Priority-based I2C DMA arbiter for multiple sensors on one bus
-  * @note    Manages MAG (highest priority), BARO (medium), High-G (lowest)
+  * @brief   Non-preemptive FCFS I2C DMA arbiter for multiple sensors on one bus
+  * @note    Manages MAG, BARO, and High-G sensors on shared I2C bus
+  * @note    Uses first-come-first-served (FCFS) scheduling with timeout watchdog
   ******************************************************************************
   */
 
@@ -13,11 +14,11 @@
 #include "i2c.h"
 #include <stdbool.h>
 
-/* Device priority levels (lower number = higher priority) */
+/* Device identifiers for I2C sensors (values reserved for future priority support) */
 typedef enum {
-    I2C_DMA_DEVICE_MAG = 0,      // Highest priority - 1kHz updates for Mahony
-    I2C_DMA_DEVICE_BARO = 1,     // Medium priority - 100Hz decimated
-    I2C_DMA_DEVICE_HIGHG = 2,    // Lowest priority - 400Hz shock detection
+    I2C_DMA_DEVICE_MAG = 0,      // Magnetometer - 1kHz updates for Mahony
+    I2C_DMA_DEVICE_BARO = 1,     // Barometer - 100Hz decimated
+    I2C_DMA_DEVICE_HIGHG = 2,    // High-G accelerometer - 400Hz shock detection
     I2C_DMA_DEVICE_COUNT = 3
 } I2C_DMA_Device_t;
 
@@ -41,16 +42,17 @@ typedef void (*I2C_DMA_Callback_t)(void);
 void I2C_DMA_Arbiter_Init(void);
 
 /**
- * @brief Request a DMA transfer (priority-based)
+ * @brief Request a DMA transfer (non-preemptive FCFS scheduling)
  * @param hi2c: I2C handle
- * @param device: Device requesting transfer (determines priority)
+ * @param device: Device requesting transfer (for statistics tracking)
  * @param dev_address: I2C device address (7-bit, shifted)
  * @param mem_address: Register address to read from
  * @param mem_size: Memory address size (I2C_MEMADD_SIZE_8BIT or 16BIT)
  * @param buffer: Buffer to receive data
  * @param size: Number of bytes to read
  * @param callback: Completion callback function
- * @retval HAL_OK if started, HAL_BUSY if arbiter occupied by higher priority
+ * @retval HAL_OK if started, HAL_BUSY if arbiter occupied
+ * @note Uses atomic check-and-set to prevent race conditions
  */
 HAL_StatusTypeDef I2C_DMA_Arbiter_RequestTransfer(
     I2C_HandleTypeDef *hi2c,
@@ -92,6 +94,14 @@ void I2C_DMA_Arbiter_HandleComplete(I2C_HandleTypeDef *hi2c);
  * @param hi2c: I2C handle
  */
 void I2C_DMA_Arbiter_HandleError(I2C_HandleTypeDef *hi2c);
+
+/**
+ * @brief Watchdog to detect and recover from stuck DMA transfers
+ * @retval true if timeout occurred and arbiter was reset
+ * @note Call from main loop or periodic timer (every 10-50ms recommended)
+ * @note Automatically releases arbiter if DMA takes longer than 100ms
+ */
+bool I2C_DMA_Arbiter_Watchdog(void);
 
 /**
  * @brief Get arbiter statistics (for debugging)

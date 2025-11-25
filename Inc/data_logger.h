@@ -131,14 +131,63 @@ typedef struct {
     uint32_t record_size;           // Always 192
 } LoggerStats_t;
 
+/* === NAVIGATION PROVIDER INTERFACE === */
+
+/**
+ * @brief Navigation data provider interface
+ * @note Register your navigation system (Mahony, EKF, etc.) using this interface
+ * @note This decouples data_logger from specific navigation implementations
+ */
+typedef struct {
+    /**
+     * @brief Get attitude quaternion (w, x, y, z)
+     * @param quat Output array[4] for quaternion
+     * @return true if quaternion valid
+     */
+    bool (*get_quaternion)(float quat[4]);
+
+    /**
+     * @brief Get position in NED frame (meters)
+     * @param pos Output array[3] for position (North, East, Down)
+     * @return true if position valid
+     */
+    bool (*get_position_ned)(float pos[3]);
+
+    /**
+     * @brief Get velocity in NED frame (m/s)
+     * @param vel Output array[3] for velocity (North, East, Down)
+     * @return true if velocity valid
+     */
+    bool (*get_velocity_ned)(float vel[3]);
+
+    /**
+     * @brief Get navigation validity flag
+     * @return true if navigation solution is valid
+     */
+    bool (*is_valid)(void);
+
+} NavigationProvider_t;
+
 /* === FUNCTION PROTOTYPES === */
+
+/**
+ * @brief Register navigation data provider
+ * @param provider Pointer to navigation provider structure
+ * @note Call this during initialization to connect your EKF/Mahony filter
+ * @note Provider can be NULL to disable navigation data logging
+ */
+void DataLogger_RegisterNavProvider(const NavigationProvider_t* provider);
 
 // Core logging functions
 bool DataLogger_Init(void);
 bool DataLogger_StartRecording(void);
 bool DataLogger_StopRecording(void);
 bool DataLogger_RecordData(void);  // Reads from SensorManager, Mahony, GPS directly
-void DataLogger_Update(void);
+void DataLogger_Update(void);      // Call from main loop for periodic metadata saves
+
+// QSPI DMA callbacks (call from QSPI HAL callbacks)
+void DataLogger_QSPI_WriteComplete(void);  // Call when QSPI write DMA completes
+void DataLogger_QSPI_WriteError(void);      // Call when QSPI write DMA fails
 
 // Status and control
 bool DataLogger_GetStats(LoggerStats_t* stats);

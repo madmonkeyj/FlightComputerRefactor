@@ -26,11 +26,24 @@ static SensorManager_Scales_t scales;
 static SensorManager_RawData_t latest_data;
 static uint32_t last_read_time_us = 0;
 
+/* DWT overflow tracking for extended microsecond timer */
+static uint32_t us_high_word = 0;
+static uint32_t last_cyccnt = 0;
+static uint32_t cycles_per_us = 0;
+
+/* Sensor calibration (optional, disabled by default) */
+static SensorCalibration_t active_calibration = {0};
+static bool calibration_enabled = false;
+
 /* Decimation counters and factors for low-priority sensors */
 static uint8_t baro_decimation_counter = 0;
 static uint8_t highg_decimation_counter = 0;
 static uint8_t baro_decimation_factor = 5;   /* Calculated from config in Init() */
 static uint8_t highg_decimation_factor = 10; /* Calculated from config in Init() */
+
+/* Last valid sensor readings for decimated sensors (moved from function scope) */
+static BMP581_Data_t last_valid_baro_data = {0};
+static H3LIS331DL_Data_t last_valid_highg_data = {0};
 
 /* Sensor scaling constants */
 /* ICM42688 IMU scaling factors */
@@ -78,11 +91,26 @@ static inline uint32_t GetMicros(void);
 static void CalculateScalingFactors(void);
 static float CalculateAltitude(float pressure_pa, float sea_level_pa);
 
-/* Microsecond timer using DWT cycle counter (race-free, higher precision) */
+/**
+ * @brief Microsecond timer with overflow handling
+ * @note Uses DWT cycle counter with overflow detection
+ * @note Extends range from ~25 seconds to ~71 minutes before wrap
+ * @note At 170 MHz: CYCCNT wraps every ~25 seconds
+ * @note This implementation tracks overflows to extend to 2^32 µs (~71 min)
+ */
 static inline uint32_t GetMicros(void) {
-    /* DWT cycle counter is incremented on every CPU cycle */
-    /* At 170 MHz: 1 µs = 170 cycles */
-    return DWT->CYCCNT / (SystemCoreClock / 1000000U);
+    uint32_t cyccnt = DWT->CYCCNT;
+
+    /* Detect overflow (wrapping from 0xFFFFFFFF to 0x00000000) */
+    if (cyccnt < last_cyccnt) {
+        /* Overflow occurred - increment high word */
+        us_high_word += (0xFFFFFFFFU / cycles_per_us) + 1;
+    }
+
+    last_cyccnt = cyccnt;
+
+    /* Return combined microseconds (still wraps at ~71 minutes) */
+    return us_high_word + (cyccnt / cycles_per_us);
 }
 
 static void CalculateScalingFactors(void) {
@@ -122,6 +150,11 @@ HAL_StatusTypeDef SensorManager_Init(const SensorManager_Config_t *user_config) 
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;  /* Enable trace */
     DWT->CYCCNT = 0;                                  /* Reset counter */
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;             /* Enable counter */
+
+    /* Initialize overflow tracking for extended microsecond timer */
+    cycles_per_us = SystemCoreClock / 1000000U;
+    us_high_word = 0;
+    last_cyccnt = 0;
 
     /* Initialize I2C DMA arbiter */
     I2C_DMA_Arbiter_Init();
@@ -223,8 +256,6 @@ HAL_StatusTypeDef SensorManager_ReadRaw(SensorManager_RawData_t *data) {
 
     /* DECIMATE BARO to target rate */
     /* Decimation factor calculated from config in SensorManager_Init() */
-    static BMP581_Data_t last_valid_baro_data = {0};
-
     if (config.use_baro) {
         if (baro_decimation_counter++ >= baro_decimation_factor) {
             baro_decimation_counter = 0;
@@ -444,13 +475,98 @@ void SensorManager_GetMahonyData(const SensorManager_RawData_t *raw,
     *gy = (raw->gyro_y / ICM42688_GYRO_SCALE_2000DPS) * DEG_TO_RAD;
     *gz = (raw->gyro_z / ICM42688_GYRO_SCALE_2000DPS) * DEG_TO_RAD;
 
+    /* Apply gyro bias calibration if available */
+    if (calibration_enabled && active_calibration.gyro_bias_valid) {
+        *gx -= active_calibration.gyro_bias[0];
+        *gy -= active_calibration.gyro_bias[1];
+        *gz -= active_calibration.gyro_bias[2];
+    }
+
     // Accel: Convert from LSB to m/s²
     *ax = (raw->accel_x / ICM42688_ACCEL_SCALE_16G) * GRAVITY_MSS;
     *ay = (raw->accel_y / ICM42688_ACCEL_SCALE_16G) * GRAVITY_MSS;
     *az = (raw->accel_z / ICM42688_ACCEL_SCALE_16G) * GRAVITY_MSS;
 
+    /* Apply accel calibration if available */
+    if (calibration_enabled && active_calibration.accel_cal_valid) {
+        *ax = (*ax - active_calibration.accel_offset[0]) * active_calibration.accel_scale[0];
+        *ay = (*ay - active_calibration.accel_offset[1]) * active_calibration.accel_scale[1];
+        *az = (*az - active_calibration.accel_offset[2]) * active_calibration.accel_scale[2];
+    }
+
     // Mag: Convert from LSB to µT (microTesla)
     *mx = (raw->mag_x / MMC5983MA_MAG_SCALE) * GAUSS_TO_MICROTESLA;
     *my = (raw->mag_y / MMC5983MA_MAG_SCALE) * GAUSS_TO_MICROTESLA;
     *mz = (raw->mag_z / MMC5983MA_MAG_SCALE) * GAUSS_TO_MICROTESLA;
+
+    /* Apply magnetometer calibration if available */
+    if (calibration_enabled && active_calibration.mag_cal_valid) {
+        /* Hard iron compensation */
+        float mx_cal = *mx - active_calibration.mag_offset[0];
+        float my_cal = *my - active_calibration.mag_offset[1];
+        float mz_cal = *mz - active_calibration.mag_offset[2];
+
+        /* Soft iron compensation (3x3 matrix multiply) */
+        *mx = active_calibration.mag_scale[0][0] * mx_cal +
+              active_calibration.mag_scale[0][1] * my_cal +
+              active_calibration.mag_scale[0][2] * mz_cal;
+
+        *my = active_calibration.mag_scale[1][0] * mx_cal +
+              active_calibration.mag_scale[1][1] * my_cal +
+              active_calibration.mag_scale[1][2] * mz_cal;
+
+        *mz = active_calibration.mag_scale[2][0] * mx_cal +
+              active_calibration.mag_scale[2][1] * my_cal +
+              active_calibration.mag_scale[2][2] * mz_cal;
+    }
+}
+
+/**
+ * @brief Set sensor calibration parameters
+ * @param cal Pointer to calibration structure (or NULL to disable)
+ */
+void SensorManager_SetCalibration(const SensorCalibration_t* cal) {
+    if (cal == NULL) {
+        calibration_enabled = false;
+        memset(&active_calibration, 0, sizeof(SensorCalibration_t));
+    } else {
+        memcpy(&active_calibration, cal, sizeof(SensorCalibration_t));
+        calibration_enabled = true;
+    }
+}
+
+/**
+ * @brief Get current calibration parameters
+ * @param cal Pointer to store calibration
+ * @return true if calibration data copied successfully
+ */
+bool SensorManager_GetCalibration(SensorCalibration_t* cal) {
+    if (cal == NULL) {
+        return false;
+    }
+
+    memcpy(cal, &active_calibration, sizeof(SensorCalibration_t));
+    return true;
+}
+
+/**
+ * @brief Reset sensor manager state (for testing/re-initialization)
+ * @note Clears cached sensor data and resets decimation counters
+ */
+void SensorManager_ResetState(void) {
+    memset(&last_valid_baro_data, 0, sizeof(BMP581_Data_t));
+    memset(&last_valid_highg_data, 0, sizeof(H3LIS331DL_Data_t));
+    baro_decimation_counter = 0;
+    highg_decimation_counter = 0;
+    memset(&sensor_status, 0, sizeof(SensorManager_Status_t));
+    memset(&latest_data, 0, sizeof(SensorManager_RawData_t));
+    last_read_time_us = 0;
+
+    /* Reset overflow tracking for microsecond timer */
+    us_high_word = 0;
+    last_cyccnt = 0;
+
+    /* Reset calibration */
+    calibration_enabled = false;
+    memset(&active_calibration, 0, sizeof(SensorCalibration_t));
 }

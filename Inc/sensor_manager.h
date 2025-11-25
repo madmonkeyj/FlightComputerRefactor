@@ -91,6 +91,29 @@ typedef struct {
     float pressure_scale;
 } SensorManager_Scales_t;
 
+/**
+ * @brief Sensor calibration parameters
+ * @note All calibrations optional - system works without them
+ * @note Disabled by default - call SensorManager_SetCalibration() to enable
+ */
+typedef struct {
+    /* Gyroscope bias (rad/s) */
+    float gyro_bias[3];
+    bool gyro_bias_valid;
+
+    /* Accelerometer offset and scale */
+    float accel_offset[3];  /* Offset (g) */
+    float accel_scale[3];   /* Scale factor */
+    bool accel_cal_valid;
+
+    /* Magnetometer hard iron offset (Gauss) */
+    float mag_offset[3];
+    /* Magnetometer soft iron matrix (3x3) */
+    float mag_scale[3][3];
+    bool mag_cal_valid;
+
+} SensorCalibration_t;
+
 /* Function prototypes */
 HAL_StatusTypeDef SensorManager_Init(const SensorManager_Config_t *config);
 HAL_StatusTypeDef SensorManager_ReadRaw(SensorManager_RawData_t *data);
@@ -115,5 +138,26 @@ void SensorManager_GetMahonyData(const SensorManager_RawData_t *raw,
                                   float *gx, float *gy, float *gz,
                                   float *ax, float *ay, float *az,
                                   float *mx, float *my, float *mz);
+
+/**
+ * @brief Reset sensor manager state (for testing/re-initialization)
+ * @note Clears cached sensor data and resets decimation counters
+ */
+void SensorManager_ResetState(void);
+
+/**
+ * @brief Set sensor calibration parameters
+ * @param cal Pointer to calibration structure
+ * @note Calibration is optional - pass NULL to disable
+ * @note System works fine without calibration (disabled by default)
+ */
+void SensorManager_SetCalibration(const SensorCalibration_t* cal);
+
+/**
+ * @brief Get current calibration parameters
+ * @param cal Pointer to store calibration
+ * @return true if calibration data copied successfully
+ */
+bool SensorManager_GetCalibration(SensorCalibration_t* cal);
 
 #endif /* SENSOR_MANAGER_H_ */

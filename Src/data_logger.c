@@ -10,7 +10,6 @@
 #include "ble_module.h"
 #include "gps_module.h"
 #include "sensor_manager.h"
-#include "mahony_filter.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -34,11 +33,20 @@ static uint32_t recording_start_time = 0;
 static uint32_t last_record_time = 0;
 static uint32_t last_recording_attempt = 0;
 
+/* QSPI DMA state tracking */
+static volatile bool qspi_write_busy = false;
+static volatile bool qspi_write_error = false;
+
+/* Metadata management */
+static bool metadata_dirty = false;
+static uint32_t last_metadata_save_time = 0;
+#define METADATA_SAVE_INTERVAL_MS  10000  /* Save metadata every 10 seconds max */
+
 /* Temporary record buffer */
 static DataRecord_t temp_record;
 
-/* External Mahony filter instance */
-extern MahonyFilter_t mahony_filter;
+/* Navigation provider interface (optional) */
+static const NavigationProvider_t* nav_provider = NULL;
 
 /**
  * @brief Pack data into 192-byte record structure
@@ -85,16 +93,46 @@ static void PackDataRecord(DataRecord_t* record) {
         record->gps_hdop = 99.9f;
     }
 
-    // === MAHONY ATTITUDE ===
-    Quaternion_t quat;
-    if (Mahony_GetQuaternion(&mahony_filter, &quat) == HAL_OK) {
-        record->quat[0] = quat.q0;
-        record->quat[1] = quat.q1;
-        record->quat[2] = quat.q2;
-        record->quat[3] = quat.q3;
-    }
+    // === NAVIGATION DATA (via provider interface) ===
+    if (nav_provider != NULL) {
+        // Get quaternion attitude
+        float quat[4] = {0};
+        if (nav_provider->get_quaternion && nav_provider->get_quaternion(quat)) {
+            record->quat[0] = quat[0];
+            record->quat[1] = quat[1];
+            record->quat[2] = quat[2];
+            record->quat[3] = quat[3];
+        }
 
-    record->nav_valid = gps_valid ? 1 : 0;
+        // Get position NED
+        if (nav_provider->get_position_ned && nav_provider->get_position_ned(record->pos_ned)) {
+            // Position successfully retrieved
+        }
+
+        // Get velocity NED
+        if (nav_provider->get_velocity_ned && nav_provider->get_velocity_ned(record->vel_ned)) {
+            // Velocity successfully retrieved
+        }
+
+        // Get navigation validity
+        if (nav_provider->is_valid) {
+            record->nav_valid = nav_provider->is_valid() ? 1 : 0;
+        } else {
+            record->nav_valid = gps_valid ? 1 : 0;
+        }
+    } else {
+        // No navigation provider - use GPS validity only
+        record->nav_valid = gps_valid ? 1 : 0;
+
+        // Zero out navigation fields
+        for (int i = 0; i < 4; i++) {
+            record->quat[i] = 0.0f;
+        }
+        for (int i = 0; i < 3; i++) {
+            record->pos_ned[i] = 0.0f;
+            record->vel_ned[i] = 0.0f;
+        }
+    }
 
     // Fill unused EKF fields with NAN
     for (int i = 0; i < 3; i++) {
@@ -107,6 +145,36 @@ static void PackDataRecord(DataRecord_t* record) {
         record->accel_ned[i] = NAN;
     }
     record->motion_state = 3;
+}
+
+/**
+ * @brief Register navigation data provider
+ * @param provider Pointer to navigation provider structure (or NULL to disable)
+ * @note This decouples data_logger from specific navigation implementations
+ * @note Provider can be Mahony filter, EKF, or any other navigation system
+ */
+void DataLogger_RegisterNavProvider(const NavigationProvider_t* provider) {
+    nav_provider = provider;
+}
+
+/**
+ * @brief QSPI write completion callback
+ * @note Called from QSPI interrupt when DMA write completes successfully
+ * @note This function should be called from your QSPI HAL callback
+ */
+void DataLogger_QSPI_WriteComplete(void) {
+    qspi_write_busy = false;
+    qspi_write_error = false;
+}
+
+/**
+ * @brief QSPI write error callback
+ * @note Called from QSPI interrupt when DMA write fails
+ * @note This function should be called from your QSPI HAL error callback
+ */
+void DataLogger_QSPI_WriteError(void) {
+    qspi_write_busy = false;
+    qspi_write_error = true;
 }
 
 /**
@@ -163,52 +231,108 @@ bool DataLogger_StartRecording(void) {
 
 /**
  * @brief Stop recording
+ * @note Always saves metadata on stop to ensure state persisted
  */
 bool DataLogger_StopRecording(void) {
-    if (logger_status != LOGGER_RECORDING) return true;
+    if (logger_status != LOGGER_RECORDING) {
+        return true;
+    }
 
     logger_status = LOGGER_IDLE;
-    Metadata_Save();
+
+    /* Save metadata on stop (ensure state persisted) */
+    if (metadata_dirty) {
+        Metadata_Save();
+        metadata_dirty = false;
+    }
+
     return true;
 }
 
 /**
  * @brief Record current sensor/GPS/attitude data to flash
+ * @note Now waits for DMA completion to prevent write corruption
+ * @note Uses metadata dirty flag to reduce flash wear
  */
 bool DataLogger_RecordData(void) {
-    if (logger_status != LOGGER_RECORDING || !flash_initialized) return false;
+    if (logger_status != LOGGER_RECORDING || !flash_initialized) {
+        return false;
+    }
+
+    /* Check if previous write still in progress */
+    if (qspi_write_busy) {
+        return false;  /* Previous write not done, skip this record */
+    }
 
     uint32_t current_time = HAL_GetTick();
 
-    if (current_time - last_recording_attempt < RECORDING_INTERVAL_MS) return true;
+    /* Rate limiting */
+    if (current_time - last_recording_attempt < RECORDING_INTERVAL_MS) {
+        return true;
+    }
     last_recording_attempt = current_time;
 
+    /* Check flash space */
     if (current_write_address + sizeof(DataRecord_t) > DATA_AREA_SIZE) {
         DataLogger_StopRecording();
         return false;
     }
 
+    /* Pack data into record */
     PackDataRecord(&temp_record);
 
-    if (temp_record.timestamp_ms == 0) return false;
+    if (temp_record.timestamp_ms == 0) {
+        return false;
+    }
 
-    if (QSPI_Quad_Write_DMA((uint8_t*)&temp_record, current_write_address, sizeof(DataRecord_t)) != HAL_OK) {
+    /* Start DMA write */
+    qspi_write_busy = true;
+    qspi_write_error = false;
+
+    if (QSPI_Quad_Write_DMA((uint8_t*)&temp_record, current_write_address,
+                            sizeof(DataRecord_t)) != HAL_OK) {
+        qspi_write_busy = false;
         logger_status = LOGGER_ERROR;
         return false;
     }
 
+    /* Wait for DMA completion (with timeout) */
+    uint32_t start = HAL_GetTick();
+    while (qspi_write_busy && (HAL_GetTick() - start) < 100) {
+        /* Wait for completion or timeout */
+    }
+
+    if (qspi_write_busy || qspi_write_error) {
+        /* Timeout or error */
+        logger_status = LOGGER_ERROR;
+        return false;
+    }
+
+    /* Now safe to increment address (DMA complete) */
     current_write_address += sizeof(DataRecord_t);
     records_written++;
     last_record_time = current_time;
 
-    if (records_written % 50 == 0) {
-        Metadata_Save();
-    }
+    /* Mark metadata as dirty instead of immediate save */
+    metadata_dirty = true;
 
     return true;
 }
 
-void DataLogger_Update(void) { }
+/**
+ * @brief Update data logger - handles periodic metadata saves
+ * @note Call this from main loop to enable periodic metadata persistence
+ * @note Saves metadata every 10 seconds if dirty (much less flash wear than every 50 records)
+ */
+void DataLogger_Update(void) {
+    /* Periodically save metadata if dirty */
+    if (metadata_dirty && (HAL_GetTick() - last_metadata_save_time) > METADATA_SAVE_INTERVAL_MS) {
+        if (Metadata_Save()) {
+            metadata_dirty = false;
+            last_metadata_save_time = HAL_GetTick();
+        }
+    }
+}
 
 /**
  * @brief Get logger statistics
