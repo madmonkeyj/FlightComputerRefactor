@@ -186,10 +186,28 @@ static const NavigationProvider_t nav_provider = {
  * @note This callback is for additional custom commands
  */
 static void BLE_CommandCallback(const char* command) {
-    char response[128];
+    char response[256];
 
+    // Navigation diagnostics command
+    if (strcmp(command, "nav") == 0) {
+        NavigationManager_GetDiagnosticsString(response, sizeof(response));
+        BLE_SendResponse(response);
+    }
+    // GPS status command
+    else if (strcmp(command, "gps") == 0) {
+        GPS_Data_t gps;
+        if (GPS_GetCurrentData(&gps)) {
+            snprintf(response, sizeof(response),
+                    "GPS: Fix=%c, Sats=%d, Spd=%.1fm/s\r\nLat=%.6f, Lon=%.6f, Alt=%.1fm\r\n",
+                    gps.fix_status, gps.satellites, gps.speed,
+                    gps.latitude, gps.longitude, gps.altitude);
+        } else {
+            snprintf(response, sizeof(response), "GPS: No valid data\r\n");
+        }
+        BLE_SendResponse(response);
+    }
     // Example: custom "test" command
-    if (strcmp(command, "test") == 0) {
+    else if (strcmp(command, "test") == 0) {
         snprintf(response, sizeof(response), "BLE Test OK! Counter=%lu\r\n", ble_test_counter);
         BLE_SendResponse(response);
     }
@@ -202,7 +220,7 @@ static void BLE_CommandCallback(const char* command) {
     }
     // Unknown command
     else {
-        snprintf(response, sizeof(response), "Unknown command: %s\r\n", command);
+        snprintf(response, sizeof(response), "Unknown command: %s\r\nTry: nav, gps, info, test\r\n", command);
         BLE_SendResponse(response);
     }
 }

@@ -401,13 +401,9 @@ bool NavigationManager_UpdateGPS(const GPS_Data_t* gps_data) {
         /* Position update */
         NavEKF_UpdateGPS(&nav_ctx.ekf, gps_data->latitude, gps_data->longitude, gps_data->altitude);
 
-        /* Velocity update */
+        /* Velocity update - use GPS velocity components directly (more accurate than speed/heading) */
         if (gps_data->speed >= 0.0f) {
-            float gps_speed_ms = gps_data->speed / 3.6f;
-            float vel_north = gps_speed_ms * cosf(gps_data->heading * DEG_TO_RAD);
-            float vel_east = gps_speed_ms * sinf(gps_data->heading * DEG_TO_RAD);
-
-            NavEKF_UpdateGPSVelocityAdaptive(&nav_ctx.ekf, vel_north, vel_east, 0.0f, gps_data->speed);
+            NavEKF_UpdateGPSVelocityAdaptive(&nav_ctx.ekf, gps_data->velN, gps_data->velE, gps_data->velD, gps_data->speed);
         }
     }
 
