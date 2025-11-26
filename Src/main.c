@@ -494,7 +494,7 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 
 /**
- * @brief QSPI TX complete callback - serves both quadspi.c polling and data_logger DMA
+ * @brief QSPI TX complete callback - for quadspi.c polling operations
  * @note Overrides __weak callback in quadspi.c
  */
 extern volatile uint8_t qspi_tx_complete;  // From quadspi.c
@@ -503,12 +503,11 @@ void HAL_QSPI_TxCpltCallback(QSPI_HandleTypeDef *hqspi) {
     // For quadspi.c polling operations
     qspi_tx_complete = 1;
 
-    // For data_logger DMA operations
-    DataLogger_QSPI_WriteComplete();
+    // Note: data_logger now uses blocking writes, no callback needed
 }
 
 /**
- * @brief QSPI error callback - serves both quadspi.c polling and data_logger DMA
+ * @brief QSPI error callback - for quadspi.c polling operations
  * @note Overrides __weak callback in quadspi.c
  */
 extern volatile uint8_t qspi_error;  // From quadspi.c
@@ -517,8 +516,7 @@ void HAL_QSPI_ErrorCallback(QSPI_HandleTypeDef *hqspi) {
     // For quadspi.c polling operations
     qspi_error = 1;
 
-    // For data_logger DMA operations
-    DataLogger_QSPI_WriteError();
+    // Note: data_logger now uses blocking writes, no callback needed
 }
 
 /**
