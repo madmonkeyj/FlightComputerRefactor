@@ -579,6 +579,18 @@ bool Metadata_Save(void) {
     current_metadata.record_size = sizeof(DataRecord_t);
     current_metadata.checksum = Metadata_CalculateChecksum(&current_metadata);
 
+    /* FIX: Wait for any pending data write to complete before erasing metadata sector */
+    /* This prevents race condition where we erase while previous record is still writing */
+    uint32_t wait_start = HAL_GetTick();
+    while (qspi_write_busy) {
+        if ((HAL_GetTick() - wait_start) > 2000) {
+            /* Timeout after 2 seconds - previous write failed or stuck */
+            qspi_write_busy = false;  /* Reset flag and try anyway */
+            break;
+        }
+        HAL_Delay(1);  /* Small delay to avoid busy-waiting */
+    }
+
     // Metadata sector was erased by Chip Erase?
     // If not calling from EraseAll, we need to erase the sector first.
     if (QSPI_Simple_Erase(METADATA_SECTOR_ADDR) != HAL_OK) return false;
