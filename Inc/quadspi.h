@@ -63,7 +63,7 @@ extern QSPI_HandleTypeDef hqspi1;
 
 void MX_QUADSPI1_Init(void);
 uint8_t QSPI_Timing_Workaround(void);
-uint8_t QSPI_AutoPollingMemReady(void);
+uint8_t QSPI_AutoPollingMemReady(uint32_t timeout_ms);
 uint8_t QSPI_Fast_AutoPolling(void);
 uint8_t QSPI_AutoPoll_IT(void);
 

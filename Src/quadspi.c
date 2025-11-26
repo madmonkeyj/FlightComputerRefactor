@@ -175,7 +175,7 @@ uint8_t QSPI_Simple_Erase(uint32_t address)
   sCommand.DdrMode = QSPI_DDR_MODE_DISABLE;
   sCommand.SIOOMode = QSPI_SIOO_INST_EVERY_CMD;
   if (HAL_QSPI_Command(&hqspi1, &sCommand, HAL_QSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK) return HAL_ERROR;
-  return QSPI_AutoPollingMemReady();
+  return QSPI_AutoPollingMemReady(5000);  /* 5 second timeout for sector erase */
 }
 
 uint8_t CSP_QSPI_Erase_Chip(void)
@@ -192,7 +192,7 @@ uint8_t CSP_QSPI_Erase_Chip(void)
   sCommand.DdrHoldHalfCycle = QSPI_DDR_HHC_ANALOG_DELAY;
   sCommand.SIOOMode = QSPI_SIOO_INST_EVERY_CMD;
   if (HAL_QSPI_Command(&hqspi1, &sCommand, HAL_MAX_DELAY) != HAL_OK) return HAL_ERROR;
-  return QSPI_AutoPollingMemReady();
+  return QSPI_AutoPollingMemReady(60000);  /* 60 second timeout for chip erase (20-40s typical) */
 }
 
 /* ============================================================================
@@ -226,7 +226,7 @@ uint8_t QSPI_Quad_Write(uint8_t *buffer, uint32_t address, uint32_t size)
 
     if (HAL_QSPI_Command(&hqspi1, &sCommand, HAL_QSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK) return HAL_ERROR;
     if (HAL_QSPI_Transmit(&hqspi1, buffer, HAL_QSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK) return HAL_ERROR;
-    if (QSPI_AutoPollingMemReady() != HAL_OK) return HAL_ERROR;
+    if (QSPI_AutoPollingMemReady(1000) != HAL_OK) return HAL_ERROR;  /* 1 second timeout for page write */
 
     buffer += write_size;
     current_addr += write_size;
@@ -356,7 +356,7 @@ static uint8_t QSPI_EnterQuadMode(void)
     if (HAL_QSPI_Transmit(&hqspi1, &reg_val, HAL_QSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK) return HAL_ERROR;
 
     /* 5. Wait for write to complete */
-    return QSPI_AutoPollingMemReady();
+    return QSPI_AutoPollingMemReady(1000);  /* 1 second timeout for status register write */
 }
 
 static uint8_t QSPI_WriteEnable(void)
@@ -389,7 +389,7 @@ static uint8_t QSPI_WriteEnable(void)
   return HAL_OK;
 }
 
-uint8_t QSPI_AutoPollingMemReady(void)
+uint8_t QSPI_AutoPollingMemReady(uint32_t timeout_ms)
 {
   QSPI_CommandTypeDef sCommand = {0};
   QSPI_AutoPollingTypeDef sConfig = {0};
@@ -409,8 +409,8 @@ uint8_t QSPI_AutoPollingMemReady(void)
   sConfig.StatusBytesSize = 1;
   sConfig.Interval = 0x10;
   sConfig.AutomaticStop = QSPI_AUTOMATIC_STOP_ENABLE;
-  /* FIX: Use 5000ms timeout instead of HAL_MAX_DELAY to prevent infinite hang */
-  if (HAL_QSPI_AutoPolling(&hqspi1, &sCommand, &sConfig, 5000) != HAL_OK) return HAL_ERROR;
+  /* FIX: Use configurable timeout instead of HAL_MAX_DELAY to prevent infinite hang */
+  if (HAL_QSPI_AutoPolling(&hqspi1, &sCommand, &sConfig, timeout_ms) != HAL_OK) return HAL_ERROR;
   return HAL_OK;
 }
 
