@@ -352,8 +352,9 @@ int main(void)
         DebugPrint("WARNING: I2C arbiter timeout recovery\r\n");
     }
 
-    // Task 2: Data logger periodic update (metadata saves every 10s)
-    DataLogger_Update();
+    // Task 2: Data logger - record data and periodic metadata saves
+    DataLogger_RecordData();  // Actually write sensor/GPS/nav data to flash
+    DataLogger_Update();      // Save metadata every 10s
 
     // ===== BLE MODULE UPDATE =====
     if (ble_initialized) {
