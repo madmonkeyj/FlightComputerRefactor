@@ -33,11 +33,6 @@ static uint32_t recording_start_time = 0;
 static uint32_t last_record_time = 0;
 static uint32_t last_recording_attempt = 0;
 
-/* QSPI DMA state tracking */
-static volatile bool qspi_write_busy = false;
-static volatile bool qspi_write_error = false;
-static volatile bool qspi_write_pending_commit = false; // Write completed, needs address update
-
 /* Metadata management */
 static bool metadata_dirty = false;
 static uint32_t last_metadata_save_time = 0;
@@ -244,27 +239,6 @@ void DataLogger_RegisterNavProvider(const NavigationProvider_t* provider) {
 }
 
 /**
- * @brief QSPI write completion callback
- * @note Called from QSPI interrupt when DMA write completes successfully
- * @note This function should be called from your QSPI HAL callback
- */
-void DataLogger_QSPI_WriteComplete(void) {
-    qspi_write_busy = false;
-    qspi_write_error = false;
-    qspi_write_pending_commit = true;  // Signal main loop to commit this write
-}
-
-/**
- * @brief QSPI write error callback
- * @note Called from QSPI interrupt when DMA write fails
- * @note This function should be called from your QSPI HAL error callback
- */
-void DataLogger_QSPI_WriteError(void) {
-    qspi_write_busy = false;
-    qspi_write_error = true;
-}
-
-/**
  * @brief Initialize data logger
  */
 bool DataLogger_Init(void) {
@@ -356,26 +330,6 @@ bool DataLogger_RecordData(void) {
         return false;
     }
 
-    /* Commit previous write if completed */
-    if (qspi_write_pending_commit) {
-        current_write_address += sizeof(DataRecord_t);
-        records_written++;
-        last_record_time = HAL_GetTick();
-        metadata_dirty = true;
-        qspi_write_pending_commit = false;
-    }
-
-    /* Check if write still in progress */
-    if (qspi_write_busy) {
-        return false;  /* Previous write not done, skip this record */
-    }
-
-    /* Check for write errors from previous cycle */
-    if (qspi_write_error) {
-        logger_status = LOGGER_ERROR;
-        return false;
-    }
-
     uint32_t current_time = HAL_GetTick();
 
     /* Rate limiting */
@@ -397,18 +351,19 @@ bool DataLogger_RecordData(void) {
         return false;
     }
 
-    /* Start DMA write (non-blocking) */
-    qspi_write_busy = true;
-    qspi_write_error = false;
-
-    if (QSPI_Quad_Write_DMA((uint8_t*)&temp_record, current_write_address,
-                            sizeof(DataRecord_t)) != HAL_OK) {
-        qspi_write_busy = false;
+    /* SIMPLIFIED: Use blocking write like old working code */
+    if (QSPI_Quad_Write((uint8_t*)&temp_record, current_write_address,
+                        sizeof(DataRecord_t)) != HAL_OK) {
         logger_status = LOGGER_ERROR;
         return false;
     }
 
-    /* Return immediately - callback will set pending_commit flag */
+    /* Update state immediately after successful write */
+    current_write_address += sizeof(DataRecord_t);
+    records_written++;
+    last_record_time = current_time;
+    metadata_dirty = true;
+
     return true;
 }
 
@@ -586,23 +541,11 @@ bool Metadata_Save(void) {
     current_metadata.record_size = sizeof(DataRecord_t);
     current_metadata.checksum = Metadata_CalculateChecksum(&current_metadata);
 
-    /* FIX: Wait for any pending data write to complete before erasing metadata sector */
-    /* This prevents race condition where we erase while previous record is still writing */
-    uint32_t wait_start = HAL_GetTick();
-    while (qspi_write_busy) {
-        if ((HAL_GetTick() - wait_start) > 2000) {
-            /* Timeout after 2 seconds - previous write failed or stuck */
-            qspi_write_busy = false;  /* Reset flag and try anyway */
-            break;
-        }
-        HAL_Delay(1);  /* Small delay to avoid busy-waiting */
-    }
-
-    // Metadata sector was erased by Chip Erase?
-    // If not calling from EraseAll, we need to erase the sector first.
+    // Erase metadata sector
     if (QSPI_Simple_Erase(METADATA_SECTOR_ADDR) != HAL_OK) return false;
 
-    if (QSPI_Quad_Write_DMA((uint8_t*)&current_metadata, METADATA_SECTOR_ADDR, sizeof(FlashMetadata_t)) != HAL_OK) {
+    // SIMPLIFIED: Use blocking write like old working code
+    if (QSPI_Quad_Write((uint8_t*)&current_metadata, METADATA_SECTOR_ADDR, sizeof(FlashMetadata_t)) != HAL_OK) {
         return false;
     }
 
