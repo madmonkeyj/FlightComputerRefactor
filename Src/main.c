@@ -82,6 +82,15 @@ static bool NavProvider_GetQuaternion(float quat[4]);
 static bool NavProvider_GetPositionNED(float pos[3]);
 static bool NavProvider_GetVelocityNED(float vel[3]);
 static bool NavProvider_IsValid(void);
+static bool NavProvider_GetPositionUncertainty(float uncertainty[3]);
+static bool NavProvider_GetVelocityUncertainty(float uncertainty[3]);
+static bool NavProvider_GetInnovationPosition(float innovation[3]);
+static bool NavProvider_GetInnovationVelocity(float innovation[3]);
+static bool NavProvider_GetKalmanGainPosition(float gain[3]);
+static bool NavProvider_GetKalmanGainVelocity(float gain[3]);
+static bool NavProvider_GetAccelNED(float accel_ned[3]);
+static bool NavProvider_GetRejectionFlags(uint8_t* gps_pos_rejected, uint8_t* gps_vel_rejected, uint8_t* zupt_applied);
+static bool NavProvider_GetMotionState(uint8_t* motion_state, uint8_t* gps_velocity_suspect);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -115,12 +124,59 @@ static bool NavProvider_IsValid(void) {
     return NavigationManager_IsHealthy();
 }
 
-/* Navigation provider structure */
+static bool NavProvider_GetPositionUncertainty(float uncertainty[3]) {
+    return NavigationManager_GetPositionUncertainty(uncertainty);
+}
+
+static bool NavProvider_GetVelocityUncertainty(float uncertainty[3]) {
+    return NavigationManager_GetVelocityUncertainty(uncertainty);
+}
+
+static bool NavProvider_GetInnovationPosition(float innovation[3]) {
+    return NavigationManager_GetInnovationPosition(innovation);
+}
+
+static bool NavProvider_GetInnovationVelocity(float innovation[3]) {
+    return NavigationManager_GetInnovationVelocity(innovation);
+}
+
+static bool NavProvider_GetKalmanGainPosition(float gain[3]) {
+    return NavigationManager_GetKalmanGainPosition(gain);
+}
+
+static bool NavProvider_GetKalmanGainVelocity(float gain[3]) {
+    return NavigationManager_GetKalmanGainVelocity(gain);
+}
+
+static bool NavProvider_GetAccelNED(float accel_ned[3]) {
+    return NavigationManager_GetAccelNED(accel_ned);
+}
+
+static bool NavProvider_GetRejectionFlags(uint8_t* gps_pos_rejected,
+                                           uint8_t* gps_vel_rejected,
+                                           uint8_t* zupt_applied) {
+    return NavigationManager_GetRejectionFlags(gps_pos_rejected, gps_vel_rejected, zupt_applied);
+}
+
+static bool NavProvider_GetMotionState(uint8_t* motion_state, uint8_t* gps_velocity_suspect) {
+    return NavigationManager_GetMotionState(motion_state, gps_velocity_suspect);
+}
+
+/* Navigation provider structure with full EKF diagnostics */
 static const NavigationProvider_t nav_provider = {
     .get_quaternion = NavProvider_GetQuaternion,
     .get_position_ned = NavProvider_GetPositionNED,
     .get_velocity_ned = NavProvider_GetVelocityNED,
-    .is_valid = NavProvider_IsValid
+    .is_valid = NavProvider_IsValid,
+    .get_position_uncertainty = NavProvider_GetPositionUncertainty,
+    .get_velocity_uncertainty = NavProvider_GetVelocityUncertainty,
+    .get_innovation_position = NavProvider_GetInnovationPosition,
+    .get_innovation_velocity = NavProvider_GetInnovationVelocity,
+    .get_kalman_gain_position = NavProvider_GetKalmanGainPosition,
+    .get_kalman_gain_velocity = NavProvider_GetKalmanGainVelocity,
+    .get_accel_ned = NavProvider_GetAccelNED,
+    .get_rejection_flags = NavProvider_GetRejectionFlags,
+    .get_motion_state = NavProvider_GetMotionState
 };
 
 /**

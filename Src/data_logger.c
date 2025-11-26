@@ -134,17 +134,102 @@ static void PackDataRecord(DataRecord_t* record) {
         }
     }
 
-    // Fill unused EKF fields with NAN
-    for (int i = 0; i < 3; i++) {
-        record->pos_uncertainty[i] = NAN;
-        record->vel_uncertainty[i] = NAN;
-        record->innovation_pos[i] = NAN;
-        record->innovation_vel[i] = NAN;
-        record->kalman_gain_pos[i] = NAN;
-        record->kalman_gain_vel[i] = NAN;
-        record->accel_ned[i] = NAN;
+    // === EKF DIAGNOSTICS (via provider interface) ===
+    if (nav_provider != NULL) {
+        // Position uncertainty
+        if (nav_provider->get_position_uncertainty &&
+            nav_provider->get_position_uncertainty(record->pos_uncertainty)) {
+            // Successfully retrieved
+        } else {
+            for (int i = 0; i < 3; i++) record->pos_uncertainty[i] = NAN;
+        }
+
+        // Velocity uncertainty
+        if (nav_provider->get_velocity_uncertainty &&
+            nav_provider->get_velocity_uncertainty(record->vel_uncertainty)) {
+            // Successfully retrieved
+        } else {
+            for (int i = 0; i < 3; i++) record->vel_uncertainty[i] = NAN;
+        }
+
+        // Position innovation
+        if (nav_provider->get_innovation_position &&
+            nav_provider->get_innovation_position(record->innovation_pos)) {
+            // Successfully retrieved
+        } else {
+            for (int i = 0; i < 3; i++) record->innovation_pos[i] = NAN;
+        }
+
+        // Velocity innovation
+        if (nav_provider->get_innovation_velocity &&
+            nav_provider->get_innovation_velocity(record->innovation_vel)) {
+            // Successfully retrieved
+        } else {
+            for (int i = 0; i < 3; i++) record->innovation_vel[i] = NAN;
+        }
+
+        // Kalman gain position
+        if (nav_provider->get_kalman_gain_position &&
+            nav_provider->get_kalman_gain_position(record->kalman_gain_pos)) {
+            // Successfully retrieved
+        } else {
+            for (int i = 0; i < 3; i++) record->kalman_gain_pos[i] = NAN;
+        }
+
+        // Kalman gain velocity
+        if (nav_provider->get_kalman_gain_velocity &&
+            nav_provider->get_kalman_gain_velocity(record->kalman_gain_vel)) {
+            // Successfully retrieved
+        } else {
+            for (int i = 0; i < 3; i++) record->kalman_gain_vel[i] = NAN;
+        }
+
+        // Accelerometer NED
+        if (nav_provider->get_accel_ned &&
+            nav_provider->get_accel_ned(record->accel_ned)) {
+            // Successfully retrieved
+        } else {
+            for (int i = 0; i < 3; i++) record->accel_ned[i] = NAN;
+        }
+
+        // Rejection flags
+        if (nav_provider->get_rejection_flags &&
+            nav_provider->get_rejection_flags(&record->gps_pos_rejected,
+                                              &record->gps_vel_rejected,
+                                              &record->zupt_applied)) {
+            // Successfully retrieved
+        } else {
+            record->gps_pos_rejected = 0;
+            record->gps_vel_rejected = 0;
+            record->zupt_applied = 0;
+        }
+
+        // Motion state
+        if (nav_provider->get_motion_state &&
+            nav_provider->get_motion_state(&record->motion_state,
+                                           &record->gps_velocity_suspect)) {
+            // Successfully retrieved
+        } else {
+            record->motion_state = 3;  // UNKNOWN
+            record->gps_velocity_suspect = 0;
+        }
+    } else {
+        // No provider - fill with NAN/defaults
+        for (int i = 0; i < 3; i++) {
+            record->pos_uncertainty[i] = NAN;
+            record->vel_uncertainty[i] = NAN;
+            record->innovation_pos[i] = NAN;
+            record->innovation_vel[i] = NAN;
+            record->kalman_gain_pos[i] = NAN;
+            record->kalman_gain_vel[i] = NAN;
+            record->accel_ned[i] = NAN;
+        }
+        record->gps_pos_rejected = 0;
+        record->gps_vel_rejected = 0;
+        record->zupt_applied = 0;
+        record->motion_state = 3;  // UNKNOWN
+        record->gps_velocity_suspect = 0;
     }
-    record->motion_state = 3;
 }
 
 /**

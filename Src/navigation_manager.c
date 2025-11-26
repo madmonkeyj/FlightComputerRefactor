@@ -675,3 +675,132 @@ NavigationEKF_t* NavigationManager_GetEKF(void) {
     }
     return NULL;
 }
+
+/* === EKF DIAGNOSTIC DATA GETTERS === */
+
+/**
+ * @brief Get position uncertainty (standard deviation from EKF covariance)
+ */
+bool NavigationManager_GetPositionUncertainty(float uncertainty[3]) {
+    if (!uncertainty || !nav_ctx.ekf.initialized) return false;
+
+    // Extract std dev from diagonal of covariance matrix (sqrt of variance)
+    uncertainty[0] = sqrtf(nav_ctx.ekf.P[0][0]);  // North
+    uncertainty[1] = sqrtf(nav_ctx.ekf.P[1][1]);  // East
+    uncertainty[2] = sqrtf(nav_ctx.ekf.P[2][2]);  // Down
+
+    return true;
+}
+
+/**
+ * @brief Get velocity uncertainty (standard deviation from EKF covariance)
+ */
+bool NavigationManager_GetVelocityUncertainty(float uncertainty[3]) {
+    if (!uncertainty || !nav_ctx.ekf.initialized) return false;
+
+    // Extract std dev from diagonal of covariance matrix (sqrt of variance)
+    uncertainty[0] = sqrtf(nav_ctx.ekf.P[3][3]);  // North velocity
+    uncertainty[1] = sqrtf(nav_ctx.ekf.P[4][4]);  // East velocity
+    uncertainty[2] = sqrtf(nav_ctx.ekf.P[5][5]);  // Down velocity
+
+    return true;
+}
+
+/**
+ * @brief Get GPS position innovation (GPS measurement - EKF prediction)
+ */
+bool NavigationManager_GetInnovationPosition(float innovation[3]) {
+    if (!innovation || !nav_ctx.ekf.initialized) return false;
+    if (!nav_ctx.ekf.debug.innovation_pos_valid) return false;
+
+    innovation[0] = nav_ctx.ekf.debug.innovation_pos[0];
+    innovation[1] = nav_ctx.ekf.debug.innovation_pos[1];
+    innovation[2] = nav_ctx.ekf.debug.innovation_pos[2];
+
+    return true;
+}
+
+/**
+ * @brief Get GPS velocity innovation (GPS measurement - EKF prediction)
+ */
+bool NavigationManager_GetInnovationVelocity(float innovation[3]) {
+    if (!innovation || !nav_ctx.ekf.initialized) return false;
+    if (!nav_ctx.ekf.debug.innovation_vel_valid) return false;
+
+    innovation[0] = nav_ctx.ekf.debug.innovation_vel[0];
+    innovation[1] = nav_ctx.ekf.debug.innovation_vel[1];
+    innovation[2] = nav_ctx.ekf.debug.innovation_vel[2];
+
+    return true;
+}
+
+/**
+ * @brief Get Kalman gain for position measurements
+ */
+bool NavigationManager_GetKalmanGainPosition(float gain[3]) {
+    if (!gain || !nav_ctx.ekf.initialized) return false;
+    if (!nav_ctx.ekf.debug.kalman_gain_pos_valid) return false;
+
+    gain[0] = nav_ctx.ekf.debug.kalman_gain_pos[0];
+    gain[1] = nav_ctx.ekf.debug.kalman_gain_pos[1];
+    gain[2] = nav_ctx.ekf.debug.kalman_gain_pos[2];
+
+    return true;
+}
+
+/**
+ * @brief Get Kalman gain for velocity measurements
+ */
+bool NavigationManager_GetKalmanGainVelocity(float gain[3]) {
+    if (!gain || !nav_ctx.ekf.initialized) return false;
+    if (!nav_ctx.ekf.debug.kalman_gain_vel_valid) return false;
+
+    gain[0] = nav_ctx.ekf.debug.kalman_gain_vel[0];
+    gain[1] = nav_ctx.ekf.debug.kalman_gain_vel[1];
+    gain[2] = nav_ctx.ekf.debug.kalman_gain_vel[2];
+
+    return true;
+}
+
+/**
+ * @brief Get accelerometer data transformed to NED frame
+ */
+bool NavigationManager_GetAccelNED(float accel_ned[3]) {
+    if (!accel_ned || !nav_ctx.ekf.initialized) return false;
+    if (!nav_ctx.ekf.debug.accel_ned_valid) return false;
+
+    accel_ned[0] = nav_ctx.ekf.debug.accel_ned[0];
+    accel_ned[1] = nav_ctx.ekf.debug.accel_ned[1];
+    accel_ned[2] = nav_ctx.ekf.debug.accel_ned[2];
+
+    return true;
+}
+
+/**
+ * @brief Get measurement rejection flags
+ */
+bool NavigationManager_GetRejectionFlags(uint8_t* gps_pos_rejected,
+                                          uint8_t* gps_vel_rejected,
+                                          uint8_t* zupt_applied) {
+    if (!gps_pos_rejected || !gps_vel_rejected || !zupt_applied) return false;
+    if (!nav_ctx.ekf.initialized) return false;
+
+    *gps_pos_rejected = nav_ctx.ekf.debug.gps_pos_rejected;
+    *gps_vel_rejected = nav_ctx.ekf.debug.gps_vel_rejected;
+    *zupt_applied = nav_ctx.ekf.debug.zupt_applied;
+
+    return true;
+}
+
+/**
+ * @brief Get motion state and GPS velocity quality
+ */
+bool NavigationManager_GetMotionState(uint8_t* motion_state, uint8_t* gps_velocity_suspect) {
+    if (!motion_state || !gps_velocity_suspect) return false;
+    if (!nav_ctx.ekf.initialized) return false;
+
+    *motion_state = (uint8_t)nav_ctx.ekf.motion.current_state;
+    *gps_velocity_suspect = 0;  // Reserved for future use
+
+    return true;
+}
