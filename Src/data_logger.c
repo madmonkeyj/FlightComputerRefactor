@@ -415,10 +415,17 @@ bool DataLogger_RecordData(void) {
 /**
  * @brief Update data logger - handles periodic metadata saves
  * @note Call this from main loop to enable periodic metadata persistence
- * @note Saves metadata every 10 seconds if dirty (much less flash wear than every 50 records)
+ * @note MODIFIED: Skip periodic saves during recording to prevent BLE blocking
+ * @note Metadata is saved on start/stop instead - prevents 5-8 second blocking
  */
 void DataLogger_Update(void) {
-    /* Periodically save metadata if dirty */
+    /* Skip periodic metadata saves while recording to prevent blocking BLE */
+    /* Metadata is saved when starting/stopping recording instead */
+    if (logger_status == LOGGER_RECORDING) {
+        return;  /* Don't save metadata while actively recording */
+    }
+
+    /* Periodically save metadata if dirty (only when NOT recording) */
     if (metadata_dirty && (HAL_GetTick() - last_metadata_save_time) > METADATA_SAVE_INTERVAL_MS) {
         if (Metadata_Save()) {
             metadata_dirty = false;
