@@ -419,8 +419,35 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 
 /**
- * @note HAL callbacks are defined in their respective modules:
- * @note - QSPI callbacks: defined in quadspi.c (calls DataLogger_QSPI_WriteComplete/Error)
+ * @brief QSPI TX complete callback - serves both quadspi.c polling and data_logger DMA
+ * @note Overrides __weak callback in quadspi.c
+ */
+extern volatile uint8_t qspi_tx_complete;  // From quadspi.c
+
+void HAL_QSPI_TxCpltCallback(QSPI_HandleTypeDef *hqspi) {
+    // For quadspi.c polling operations
+    qspi_tx_complete = 1;
+
+    // For data_logger DMA operations
+    DataLogger_QSPI_WriteComplete();
+}
+
+/**
+ * @brief QSPI error callback - serves both quadspi.c polling and data_logger DMA
+ * @note Overrides __weak callback in quadspi.c
+ */
+extern volatile uint8_t qspi_error;  // From quadspi.c
+
+void HAL_QSPI_ErrorCallback(QSPI_HandleTypeDef *hqspi) {
+    // For quadspi.c polling operations
+    qspi_error = 1;
+
+    // For data_logger DMA operations
+    DataLogger_QSPI_WriteError();
+}
+
+/**
+ * @note Other HAL callbacks:
  * @note - UART callbacks: defined in ble_module.c (for BLE communication)
  * @note - For LoRa support: add UART routing in ble_module.c or create runtime selection
  */
