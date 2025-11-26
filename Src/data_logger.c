@@ -300,15 +300,6 @@ bool DataLogger_StopRecording(void) {
         return true;
     }
 
-    /* Commit any pending write before stopping */
-    if (qspi_write_pending_commit) {
-        current_write_address += sizeof(DataRecord_t);
-        records_written++;
-        last_record_time = HAL_GetTick();
-        metadata_dirty = true;
-        qspi_write_pending_commit = false;
-    }
-
     logger_status = LOGGER_IDLE;
 
     /* Save metadata on stop (ensure state persisted) */
@@ -322,7 +313,7 @@ bool DataLogger_StopRecording(void) {
 
 /**
  * @brief Record current sensor/GPS/attitude data to flash
- * @note Non-blocking - uses DMA callback to track completion
+ * @note Uses blocking QSPI write for simplicity and reliability
  * @note Uses metadata dirty flag to reduce flash wear
  */
 bool DataLogger_RecordData(void) {
