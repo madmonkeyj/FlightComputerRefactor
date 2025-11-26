@@ -36,6 +36,7 @@ static uint32_t last_recording_attempt = 0;
 /* QSPI DMA state tracking */
 static volatile bool qspi_write_busy = false;
 static volatile bool qspi_write_error = false;
+static volatile bool qspi_write_pending_commit = false; // Write completed, needs address update
 
 /* Metadata management */
 static bool metadata_dirty = false;
@@ -250,6 +251,7 @@ void DataLogger_RegisterNavProvider(const NavigationProvider_t* provider) {
 void DataLogger_QSPI_WriteComplete(void) {
     qspi_write_busy = false;
     qspi_write_error = false;
+    qspi_write_pending_commit = true;  // Signal main loop to commit this write
 }
 
 /**
@@ -317,10 +319,20 @@ bool DataLogger_StartRecording(void) {
 /**
  * @brief Stop recording
  * @note Always saves metadata on stop to ensure state persisted
+ * @note Commits any pending write before stopping
  */
 bool DataLogger_StopRecording(void) {
     if (logger_status != LOGGER_RECORDING) {
         return true;
+    }
+
+    /* Commit any pending write before stopping */
+    if (qspi_write_pending_commit) {
+        current_write_address += sizeof(DataRecord_t);
+        records_written++;
+        last_record_time = HAL_GetTick();
+        metadata_dirty = true;
+        qspi_write_pending_commit = false;
     }
 
     logger_status = LOGGER_IDLE;
@@ -336,7 +348,7 @@ bool DataLogger_StopRecording(void) {
 
 /**
  * @brief Record current sensor/GPS/attitude data to flash
- * @note Now waits for DMA completion to prevent write corruption
+ * @note Non-blocking - uses DMA callback to track completion
  * @note Uses metadata dirty flag to reduce flash wear
  */
 bool DataLogger_RecordData(void) {
@@ -344,9 +356,24 @@ bool DataLogger_RecordData(void) {
         return false;
     }
 
-    /* Check if previous write still in progress */
+    /* Commit previous write if completed */
+    if (qspi_write_pending_commit) {
+        current_write_address += sizeof(DataRecord_t);
+        records_written++;
+        last_record_time = HAL_GetTick();
+        metadata_dirty = true;
+        qspi_write_pending_commit = false;
+    }
+
+    /* Check if write still in progress */
     if (qspi_write_busy) {
         return false;  /* Previous write not done, skip this record */
+    }
+
+    /* Check for write errors from previous cycle */
+    if (qspi_write_error) {
+        logger_status = LOGGER_ERROR;
+        return false;
     }
 
     uint32_t current_time = HAL_GetTick();
@@ -370,7 +397,7 @@ bool DataLogger_RecordData(void) {
         return false;
     }
 
-    /* Start DMA write */
+    /* Start DMA write (non-blocking) */
     qspi_write_busy = true;
     qspi_write_error = false;
 
@@ -381,26 +408,7 @@ bool DataLogger_RecordData(void) {
         return false;
     }
 
-    /* Wait for DMA completion (with timeout) */
-    uint32_t start = HAL_GetTick();
-    while (qspi_write_busy && (HAL_GetTick() - start) < 100) {
-        /* Wait for completion or timeout */
-    }
-
-    if (qspi_write_busy || qspi_write_error) {
-        /* Timeout or error */
-        logger_status = LOGGER_ERROR;
-        return false;
-    }
-
-    /* Now safe to increment address (DMA complete) */
-    current_write_address += sizeof(DataRecord_t);
-    records_written++;
-    last_record_time = current_time;
-
-    /* Mark metadata as dirty instead of immediate save */
-    metadata_dirty = true;
-
+    /* Return immediately - callback will set pending_commit flag */
     return true;
 }
 
