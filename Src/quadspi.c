@@ -409,7 +409,8 @@ uint8_t QSPI_AutoPollingMemReady(void)
   sConfig.StatusBytesSize = 1;
   sConfig.Interval = 0x10;
   sConfig.AutomaticStop = QSPI_AUTOMATIC_STOP_ENABLE;
-  if (HAL_QSPI_AutoPolling(&hqspi1, &sCommand, &sConfig, HAL_MAX_DELAY) != HAL_OK) return HAL_ERROR;
+  /* FIX: Use 5000ms timeout instead of HAL_MAX_DELAY to prevent infinite hang */
+  if (HAL_QSPI_AutoPolling(&hqspi1, &sCommand, &sConfig, 5000) != HAL_OK) return HAL_ERROR;
   return HAL_OK;
 }
 
