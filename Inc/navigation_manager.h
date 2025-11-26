@@ -223,5 +223,84 @@ void NavigationManager_EnableDebugMode(bool enable_debug, bool force_zupt);
  */
 NavigationEKF_t* NavigationManager_GetEKF(void);
 
+/* === EKF DIAGNOSTIC DATA GETTERS === */
+
+/**
+ * @brief Get position uncertainty (standard deviation from EKF covariance)
+ * @param uncertainty Output array[3] for position std dev (N, E, D) in meters
+ * @retval true if uncertainty valid
+ * @retval false if EKF not initialized
+ */
+bool NavigationManager_GetPositionUncertainty(float uncertainty[3]);
+
+/**
+ * @brief Get velocity uncertainty (standard deviation from EKF covariance)
+ * @param uncertainty Output array[3] for velocity std dev (N, E, D) in m/s
+ * @retval true if uncertainty valid
+ * @retval false if EKF not initialized
+ */
+bool NavigationManager_GetVelocityUncertainty(float uncertainty[3]);
+
+/**
+ * @brief Get GPS position innovation (GPS measurement - EKF prediction)
+ * @param innovation Output array[3] for innovation (N, E, D) in meters
+ * @retval true if innovation valid
+ * @retval false if no recent GPS update
+ */
+bool NavigationManager_GetInnovationPosition(float innovation[3]);
+
+/**
+ * @brief Get GPS velocity innovation (GPS measurement - EKF prediction)
+ * @param innovation Output array[3] for innovation (N, E, D) in m/s
+ * @retval true if innovation valid
+ * @retval false if no recent GPS update
+ */
+bool NavigationManager_GetInnovationVelocity(float innovation[3]);
+
+/**
+ * @brief Get Kalman gain for position measurements
+ * @param gain Output array[3] for Kalman gains (N, E, D)
+ * @retval true if gain valid
+ * @retval false if no recent GPS update
+ */
+bool NavigationManager_GetKalmanGainPosition(float gain[3]);
+
+/**
+ * @brief Get Kalman gain for velocity measurements
+ * @param gain Output array[3] for Kalman gains (N, E, D)
+ * @retval true if gain valid
+ * @retval false if no recent GPS update
+ */
+bool NavigationManager_GetKalmanGainVelocity(float gain[3]);
+
+/**
+ * @brief Get accelerometer data transformed to NED frame
+ * @param accel_ned Output array[3] for accel (N, E, D) in m/s²
+ * @retval true if transform valid
+ * @retval false if AHRS not initialized
+ */
+bool NavigationManager_GetAccelNED(float accel_ned[3]);
+
+/**
+ * @brief Get measurement rejection flags
+ * @param gps_pos_rejected Output: 1 if GPS position rejected this cycle
+ * @param gps_vel_rejected Output: 1 if GPS velocity rejected this cycle
+ * @param zupt_applied Output: 1 if ZUPT applied this cycle
+ * @retval true if flags valid
+ * @retval false if EKF not initialized
+ */
+bool NavigationManager_GetRejectionFlags(uint8_t* gps_pos_rejected,
+                                          uint8_t* gps_vel_rejected,
+                                          uint8_t* zupt_applied);
+
+/**
+ * @brief Get motion state and GPS velocity quality
+ * @param motion_state Output: 0=STATIONARY, 1=SLOW, 2=FAST, 3=UNKNOWN
+ * @param gps_velocity_suspect Output: 1 if GPS velocity suspect (reserved for future use)
+ * @retval true if state valid
+ * @retval false if EKF not initialized
+ */
+bool NavigationManager_GetMotionState(uint8_t* motion_state, uint8_t* gps_velocity_suspect);
+
 
 #endif /* NAVIGATION_MANAGER_H_ */

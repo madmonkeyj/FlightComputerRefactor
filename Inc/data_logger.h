@@ -137,8 +137,10 @@ typedef struct {
  * @brief Navigation data provider interface
  * @note Register your navigation system (Mahony, EKF, etc.) using this interface
  * @note This decouples data_logger from specific navigation implementations
+ * @note Optional callbacks can be NULL if not available (will log NAN/0)
  */
 typedef struct {
+    // === BASIC NAVIGATION DATA (Required) ===
     /**
      * @brief Get attitude quaternion (w, x, y, z)
      * @param quat Output array[4] for quaternion
@@ -165,6 +167,78 @@ typedef struct {
      * @return true if navigation solution is valid
      */
     bool (*is_valid)(void);
+
+    // === EKF UNCERTAINTY ESTIMATES (Optional - can be NULL) ===
+    /**
+     * @brief Get position uncertainty (standard deviation)
+     * @param uncertainty Output array[3] for position std dev (N, E, D) in meters
+     * @return true if uncertainty valid
+     */
+    bool (*get_position_uncertainty)(float uncertainty[3]);
+
+    /**
+     * @brief Get velocity uncertainty (standard deviation)
+     * @param uncertainty Output array[3] for velocity std dev (N, E, D) in m/s
+     * @return true if uncertainty valid
+     */
+    bool (*get_velocity_uncertainty)(float uncertainty[3]);
+
+    // === EKF INNOVATION VALUES (Optional - can be NULL) ===
+    /**
+     * @brief Get GPS position innovation (GPS measurement - EKF prediction)
+     * @param innovation Output array[3] for innovation (N, E, D) in meters
+     * @return true if innovation valid
+     */
+    bool (*get_innovation_position)(float innovation[3]);
+
+    /**
+     * @brief Get GPS velocity innovation (GPS measurement - EKF prediction)
+     * @param innovation Output array[3] for innovation (N, E, D) in m/s
+     * @return true if innovation valid
+     */
+    bool (*get_innovation_velocity)(float innovation[3]);
+
+    // === KALMAN GAINS (Optional - can be NULL) ===
+    /**
+     * @brief Get Kalman gain for position measurements
+     * @param gain Output array[3] for Kalman gains (N, E, D)
+     * @return true if gain valid
+     */
+    bool (*get_kalman_gain_position)(float gain[3]);
+
+    /**
+     * @brief Get Kalman gain for velocity measurements
+     * @param gain Output array[3] for Kalman gains (N, E, D)
+     * @return true if gain valid
+     */
+    bool (*get_kalman_gain_velocity)(float gain[3]);
+
+    // === COORDINATE TRANSFORMS (Optional - can be NULL) ===
+    /**
+     * @brief Get accelerometer data transformed to NED frame
+     * @param accel_ned Output array[3] for accel (N, E, D) in m/s²
+     * @return true if transform valid
+     */
+    bool (*get_accel_ned)(float accel_ned[3]);
+
+    // === REJECTION FLAGS (Optional - can be NULL) ===
+    /**
+     * @brief Get measurement rejection flags
+     * @param gps_pos_rejected Output: 1 if GPS position rejected this cycle
+     * @param gps_vel_rejected Output: 1 if GPS velocity rejected this cycle
+     * @param zupt_applied Output: 1 if ZUPT applied this cycle
+     * @return true if flags valid
+     */
+    bool (*get_rejection_flags)(uint8_t* gps_pos_rejected, uint8_t* gps_vel_rejected, uint8_t* zupt_applied);
+
+    // === MOTION STATE (Optional - can be NULL) ===
+    /**
+     * @brief Get motion state and GPS velocity quality
+     * @param motion_state Output: 0=STATIONARY, 1=SLOW, 2=FAST, 3=UNKNOWN
+     * @param gps_velocity_suspect Output: 1 if GPS velocity suspect
+     * @return true if state valid
+     */
+    bool (*get_motion_state)(uint8_t* motion_state, uint8_t* gps_velocity_suspect);
 
 } NavigationProvider_t;
 
