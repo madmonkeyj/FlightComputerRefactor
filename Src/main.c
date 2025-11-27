@@ -272,8 +272,6 @@ int main(void)
   // Wait for USB CDC to be ready
   HAL_Delay(2000);
 
-  DebugPrint("=== FlightComputer Full Navigation System ===\r\n");
-
   // ===== SENSOR MANAGER INITIALIZATION =====
   SensorManager_Config_t sensor_config = {
       .imu_odr_hz = 1000,
@@ -288,31 +286,24 @@ int main(void)
       .use_baro = true
   };
 
-  if (SensorManager_Init(&sensor_config) == HAL_OK) {
-      DebugPrint("Sensor Manager initialized\r\n");
-  } else {
+  if (SensorManager_Init(&sensor_config) != HAL_OK) {
       DebugPrint("ERROR: Sensor Manager init failed\r\n");
   }
 
   // ===== NAVIGATION MANAGER INITIALIZATION =====
   // Full AHRS + EKF with sensor adapter for actual hardware
-  if (NavigationManager_Init()) {
-      DebugPrint("Navigation Manager initialized (AHRS 500Hz + EKF 50Hz)\r\n");
-  } else {
+  if (!NavigationManager_Init()) {
       DebugPrint("ERROR: Navigation Manager init failed\r\n");
   }
 
   // ===== GPS MODULE INITIALIZATION =====
-  if (GPS_Init()) {
-      DebugPrint("GPS module initialized\r\n");
-  } else {
+  if (!GPS_Init()) {
       DebugPrint("ERROR: GPS init failed\r\n");
   }
 
   // ===== BLE MODULE INITIALIZATION =====
   if (BLE_Init()) {
       ble_initialized = true;
-      DebugPrint("BLE Module initialized successfully\r\n");
 
       // Register command callback for custom commands
       BLE_RegisterCommandCallback(BLE_CommandCallback);
@@ -354,26 +345,14 @@ int main(void)
 
   // ===== DATA LOGGER INITIALIZATION =====
   if (DataLogger_Init()) {
-      DebugPrint("Data Logger initialized successfully\r\n");
-
       // Register navigation provider (AHRS + EKF integration)
       DataLogger_RegisterNavProvider(&nav_provider);
-      DebugPrint("Navigation provider registered (quaternion + position + velocity)\r\n");
-
-      // Display flash status
-      char status_buffer[200];
-      if (DataLogger_GetStatusString(status_buffer, sizeof(status_buffer))) {
-          DebugPrint(status_buffer);
-          DebugPrint("\r\n");
-      }
   } else {
       DebugPrint("ERROR: Data Logger initialization failed!\r\n");
   }
 
   // ===== USB COMMANDS INITIALIZATION =====
-  if (USBCommands_Init()) {
-      DebugPrint("USB Commands initialized successfully\r\n");
-  } else {
+  if (!USBCommands_Init()) {
       DebugPrint("ERROR: USB Commands initialization failed!\r\n");
   }
 
@@ -388,25 +367,16 @@ int main(void)
   }
   */
 
-  DebugPrint("=== All systems initialized - entering main loop ===\r\n");
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  static uint32_t last_heartbeat = 0;
   while (1)
   {
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
-    // ===== HEARTBEAT (every 10 seconds) =====
-    if ((HAL_GetTick() - last_heartbeat) > 10000) {
-        DebugPrint("HEARTBEAT: Main loop alive\r\n");
-        last_heartbeat = HAL_GetTick();
-    }
 
     // ===== NAVIGATION UPDATE =====
     // Read sensors via adapter and update navigation
