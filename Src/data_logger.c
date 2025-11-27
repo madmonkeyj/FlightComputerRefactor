@@ -371,6 +371,14 @@ bool DataLogger_RecordData(void) {
     last_record_time = current_time;
     metadata_dirty = true;
 
+    // Debug: Print every 100 records to show progress
+    if (records_written % 100 == 0) {
+        char debug_msg[80];
+        snprintf(debug_msg, sizeof(debug_msg), "Recorded %lu records, last write: %lums\r\n",
+                 records_written, write_duration);
+        DebugPrint(debug_msg);
+    }
+
     return true;
 }
 
