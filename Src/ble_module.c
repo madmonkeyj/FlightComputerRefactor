@@ -735,12 +735,20 @@ static bool BLE_StartDMA(void) {
  * @brief HAL UART RX Event Callback - automatically called by HAL when idle line detected
  * @note This is the PROPER callback for HAL_UARTEx_ReceiveToIdle_DMA()
  * @note Called from interrupt context - keep it fast!
+ * @note CRITICAL: Must restart DMA after idle line event!
  */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
     if (huart->Instance == USART1) {
         /* Update DMA write position */
         last_dma_write_pos = BLE_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
         last_rx_time = HAL_GetTick();
+
+        /* CRITICAL: HAL_UARTEx_ReceiveToIdle_DMA is NOT circular - must restart! */
+        if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE) != HAL_OK) {
+            dma_active = false;
+        } else {
+            __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
+        }
     }
 }
 
