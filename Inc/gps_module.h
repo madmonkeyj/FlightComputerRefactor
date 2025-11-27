@@ -234,11 +234,17 @@ static inline float GPS_Get3DSpeed(const GPS_Data_t* data) {
 bool InitializeGPS(void);   // Calls GPS_Init()
 bool ReadGPSData(void);     // Calls GPS_Update()
 
-// === UART CALLBACK FUNCTION ===
+// === UART CALLBACK FUNCTIONS ===
 /**
  * @brief GPS UART callback - called from main UART callback
  * @note Call this from HAL_UART_RxCpltCallback when huart == &huart3
  */
 void GPS_UART_RxCallback(void);
+
+/**
+ * @brief GPS UART RX Event callback - called from unified HAL_UARTEx_RxEventCallback
+ * @note Handles USART3 idle line detection for message boundaries
+ */
+void GPS_UART_RxEventCallback(void);
 
 #endif /* GPS_MODULE_H_ */
