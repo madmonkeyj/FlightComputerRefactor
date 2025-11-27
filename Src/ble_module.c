@@ -375,12 +375,17 @@ static void BLE_ProcessCommand(const char* command) {
         }
     }
     else if (strcmp(cmd_lower, "stop") == 0) {
+        // Debug: Confirm command received
+        DebugPrint("BLE: STOP command received\r\n");
+
         // Stop data logging and resume BLE transmission
         if (DataLogger_StopRecording()) {
             data_transmission_enabled = true;   // Resume BLE sensor data transmission
             BLE_SendResponse("Recording stopped - BLE transmission resumed");
+            DebugPrint("BLE: Recording stopped successfully\r\n");
         } else {
             BLE_SendResponse("ERROR: Failed to stop recording");
+            DebugPrint("BLE: ERROR - Failed to stop recording\r\n");
         }
     }
     else if (strcmp(cmd_lower, "status") == 0) {
