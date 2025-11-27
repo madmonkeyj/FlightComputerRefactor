@@ -23,7 +23,7 @@ extern DMA_HandleTypeDef hdma_usart1_rx;
 static uint8_t ble_rx_dma_buffer[BLE_RX_BUFFER_SIZE];
 static uint16_t buffer_read_pos = 0;
 static volatile uint16_t last_dma_write_pos = 0;  /* Updated by DMA idle callback */
-static bool dma_active = false;
+static volatile bool dma_active = false;  /* CRITICAL: Must be volatile - accessed in ISR */
 
 /* Command processing buffer */
 static uint8_t rx_buffer[128];
@@ -762,7 +762,29 @@ static bool BLE_StartDMA(void) {
 }
 
 /**
- * @brief BLE UART RX Event handler - called from unified callback in gps_module.c
+ * @brief HAL UART RX Event Callback - automatically called by HAL when idle line detected
+ * @note This is the PROPER callback for HAL_UARTEx_ReceiveToIdle_DMA()
+ * @note Called from interrupt context - keep it fast!
+ * @note CRITICAL: Must restart DMA after idle line event!
+ */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
+    if (huart->Instance == USART1) {
+        /* Update DMA write position */
+        last_dma_write_pos = BLE_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
+        last_rx_time = HAL_GetTick();
+
+        /* CRITICAL: HAL_UARTEx_ReceiveToIdle_DMA is NOT circular - must restart! */
+        if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE) != HAL_OK) {
+            dma_active = false;
+        } else {
+            __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
+        }
+    }
+}
+
+/**
+ * @brief Legacy callback - kept for compatibility with manual idle handling
+ * @deprecated Should use HAL_UARTEx_RxEventCallback() instead
  */
 void BLE_UART_RxEventCallback(void) {
     /* Just update position - DO NOT restart DMA! */
