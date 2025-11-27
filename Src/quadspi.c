@@ -114,14 +114,22 @@ uint8_t QSPI_Simple_Init(void)
   /* 2. Apply Timing Workaround FIRST (STM32G4 Errata 2.6.2) */
   /* If we don't do this first, subsequent commands might fail! */
   CLEAR_BIT(QUADSPI->CR, QUADSPI_CR_EN);
-  while(QUADSPI->SR & QUADSPI_SR_BUSY) {}
+
+  /* FIX: Add timeout to busy-wait loop to prevent infinite hang */
+  uint32_t timeout = HAL_GetTick() + 1000;
+  while((QUADSPI->SR & QUADSPI_SR_BUSY) && (HAL_GetTick() < timeout)) {}
+  if (QUADSPI->SR & QUADSPI_SR_BUSY) return HAL_ERROR;
 
   QUADSPI->CR = 0xFF000001;  /* Max prescaler + enable */
   QUADSPI->CCR = 0x20000000; /* Free-running clock */
   QUADSPI->CCR = 0x20000000; /* Repeated per errata */
 
   CLEAR_BIT(QUADSPI->CR, QUADSPI_CR_EN);
-  while(QUADSPI->SR & QUADSPI_SR_BUSY) {}
+
+  /* FIX: Add timeout to busy-wait loop to prevent infinite hang */
+  timeout = HAL_GetTick() + 1000;
+  while((QUADSPI->SR & QUADSPI_SR_BUSY) && (HAL_GetTick() < timeout)) {}
+  if (QUADSPI->SR & QUADSPI_SR_BUSY) return HAL_ERROR;
 
   SET_BIT(QUADSPI->CR, QUADSPI_CR_EN);
 
@@ -191,7 +199,8 @@ uint8_t CSP_QSPI_Erase_Chip(void)
   sCommand.DdrMode = QSPI_DDR_MODE_DISABLE;
   sCommand.DdrHoldHalfCycle = QSPI_DDR_HHC_ANALOG_DELAY;
   sCommand.SIOOMode = QSPI_SIOO_INST_EVERY_CMD;
-  if (HAL_QSPI_Command(&hqspi1, &sCommand, HAL_MAX_DELAY) != HAL_OK) return HAL_ERROR;
+  /* FIX: Use timeout instead of HAL_MAX_DELAY to prevent infinite hang */
+  if (HAL_QSPI_Command(&hqspi1, &sCommand, 1000) != HAL_OK) return HAL_ERROR;
   return QSPI_AutoPollingMemReady(60000);  /* 60 second timeout for chip erase (20-40s typical) */
 }
 

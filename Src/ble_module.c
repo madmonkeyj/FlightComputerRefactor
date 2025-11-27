@@ -181,8 +181,6 @@ static bool EnterCommandMode(void) {
  * @brief Initialize BLE module with DMA
  */
 bool BLE_Init(void) {
-    DebugPrint("BLE: Initializing BLE module...\r\n");
-
     /* Reset all private variables */
     buffer_read_pos = 0;
     last_dma_write_pos = 0;
@@ -227,7 +225,6 @@ bool BLE_Init(void) {
     ble_initialized = true;
     last_rx_time = HAL_GetTick();
 
-    DebugPrint("BLE: Module initialized successfully\r\n");
     return true;
 }
 
@@ -300,12 +297,10 @@ void BLE_Update(void) {
         if (ble_status == BLE_STATUS_DISCONNECTED) {
             ble_status = BLE_STATUS_CONNECTED;
             connection_count++;
-            DebugPrint("BLE: Device connected\r\n");
         }
     } else if (time_since_activity > 15000) { /* No activity for 15 seconds */
         if (ble_status == BLE_STATUS_CONNECTED) {
             ble_status = BLE_STATUS_DISCONNECTED;
-            DebugPrint("BLE: Device disconnected\r\n");
         }
     }
 }
@@ -366,28 +361,20 @@ static void BLE_ProcessCommand(const char* command) {
 
     /* Built-in command processing */
     if (strcmp(cmd_lower, "start") == 0) {
-        // Debug: Confirm command received
-        DebugPrint("BLE: START command received\r\n");
-
         // Start data logging instead of just changing transmission mode
         if (DataLogger_StartRecording()) {
             data_transmission_enabled = false;  // Stop BLE sensor data transmission
             BLE_SendResponse("Recording started - data logging to flash");
-            DebugPrint("BLE: Recording started successfully\r\n");
         } else {
             BLE_SendResponse("ERROR: Failed to start recording");
             DebugPrint("BLE: ERROR - Failed to start recording\r\n");
         }
     }
     else if (strcmp(cmd_lower, "stop") == 0) {
-        // Debug: Confirm command received
-        DebugPrint("BLE: STOP command received\r\n");
-
         // Stop data logging and resume BLE transmission
         if (DataLogger_StopRecording()) {
             data_transmission_enabled = true;   // Resume BLE sensor data transmission
             BLE_SendResponse("Recording stopped - BLE transmission resumed");
-            DebugPrint("BLE: Recording stopped successfully\r\n");
         } else {
             BLE_SendResponse("ERROR: Failed to stop recording");
             DebugPrint("BLE: ERROR - Failed to stop recording\r\n");
