@@ -366,12 +366,17 @@ static void BLE_ProcessCommand(const char* command) {
 
     /* Built-in command processing */
     if (strcmp(cmd_lower, "start") == 0) {
+        // Debug: Confirm command received
+        DebugPrint("BLE: START command received\r\n");
+
         // Start data logging instead of just changing transmission mode
         if (DataLogger_StartRecording()) {
             data_transmission_enabled = false;  // Stop BLE sensor data transmission
             BLE_SendResponse("Recording started - data logging to flash");
+            DebugPrint("BLE: Recording started successfully\r\n");
         } else {
             BLE_SendResponse("ERROR: Failed to start recording");
+            DebugPrint("BLE: ERROR - Failed to start recording\r\n");
         }
     }
     else if (strcmp(cmd_lower, "stop") == 0) {

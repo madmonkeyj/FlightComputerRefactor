@@ -394,12 +394,19 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  static uint32_t last_heartbeat = 0;
   while (1)
   {
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+    // ===== HEARTBEAT (every 10 seconds) =====
+    if ((HAL_GetTick() - last_heartbeat) > 10000) {
+        DebugPrint("HEARTBEAT: Main loop alive\r\n");
+        last_heartbeat = HAL_GetTick();
+    }
 
     // ===== NAVIGATION UPDATE =====
     // Read sensors via adapter and update navigation
