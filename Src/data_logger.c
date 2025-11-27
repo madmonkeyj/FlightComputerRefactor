@@ -343,10 +343,26 @@ bool DataLogger_RecordData(void) {
     }
 
     /* SIMPLIFIED: Use blocking write like old working code */
-    if (QSPI_Quad_Write((uint8_t*)&temp_record, current_write_address,
-                        sizeof(DataRecord_t)) != HAL_OK) {
+    uint32_t write_start = HAL_GetTick();
+    HAL_StatusTypeDef write_result = QSPI_Quad_Write((uint8_t*)&temp_record, current_write_address,
+                        sizeof(DataRecord_t));
+    uint32_t write_duration = HAL_GetTick() - write_start;
+
+    if (write_result != HAL_OK) {
+        // Debug: Report error
+        char debug_msg[100];
+        snprintf(debug_msg, sizeof(debug_msg), "QSPI Write FAILED after %lums, status=%d\r\n",
+                 write_duration, write_result);
+        DebugPrint(debug_msg);
         logger_status = LOGGER_ERROR;
         return false;
+    }
+
+    // Debug: Warn if write took too long
+    if (write_duration > 100) {
+        char debug_msg[100];
+        snprintf(debug_msg, sizeof(debug_msg), "WARNING: QSPI write took %lums\r\n", write_duration);
+        DebugPrint(debug_msg);
     }
 
     /* Update state immediately after successful write */
