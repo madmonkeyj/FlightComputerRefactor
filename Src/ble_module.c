@@ -732,7 +732,7 @@ static void BLE_ProcessReceivedByte(uint8_t byte) {
 }
 
 /**
- * @brief Start DMA reception with circular buffer (same pattern as GPS)
+ * @brief Start DMA reception with circular buffer (true circular mode)
  */
 static bool BLE_StartDMA(void) {
     /* Clear UART errors */
@@ -744,14 +744,14 @@ static bool BLE_StartDMA(void) {
     /* Stop any ongoing transfers */
     HAL_UART_AbortReceive(&huart1);
 
-    /* Start DMA with idle line detection (CRITICAL: use same API as restart) */
-    if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE) != HAL_OK) {
+    /* Start DMA in CIRCULAR mode (NOT idle detection) */
+    if (HAL_UART_Receive_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE) != HAL_OK) {
         dma_active = false;
         DebugPrint("BLE: DMA start failed\r\n");
         return false;
     }
 
-    /* Disable half-transfer interrupt (not needed for circular buffer) */
+    /* Disable half-transfer interrupt (not needed) */
     __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
 
     dma_active = true;
@@ -763,76 +763,38 @@ static bool BLE_StartDMA(void) {
 }
 
 /**
- * @brief HAL UART RX Event Callback - automatically called by HAL when idle line detected
- * @note This is the PROPER callback for HAL_UARTEx_ReceiveToIdle_DMA()
- * @note Called from interrupt context - keep it fast!
- * @note CRITICAL: Must restart DMA after idle line event!
- */
-/**
- * @brief Unified UART RX Event callback - dispatches to BLE and GPS handlers
- * @note Handles both USART1 (BLE) and USART3 (GPS) idle line detection
+ * @brief HAL UART RX Event Callback - handles GPS (USART3) idle line detection
+ * @note BLE (USART1) uses circular DMA with manual idle handling in stm32g4xx_it.c
+ * @note GPS (USART3) uses one-shot DMA with idle detection
  */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
-    if (huart->Instance == USART1) {
-        /* BLE: Update DMA write position */
-        last_dma_write_pos = BLE_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
-        last_rx_time = HAL_GetTick();
-
-        /* CRITICAL: HAL_UARTEx_ReceiveToIdle_DMA is NOT circular - must restart! */
-        if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE) != HAL_OK) {
-            dma_active = false;
-        } else {
-            __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
-        }
-    }
-    else if (huart->Instance == USART3) {
+    if (huart->Instance == USART3) {
         /* GPS: Dispatch to GPS module handler */
         GPS_UART_RxEventCallback();
     }
 }
 
 /**
- * @brief Legacy callback - kept for compatibility with manual idle handling
- * @deprecated Should use HAL_UARTEx_RxEventCallback() instead
+ * @brief BLE UART idle line callback - called from manual idle handling in stm32g4xx_it.c
+ * @note Used with circular DMA (HAL_UART_Receive_DMA)
+ * @note Updates write position but does NOT restart DMA (circular mode continues)
  */
 void BLE_UART_RxEventCallback(void) {
-    /* Just update position - DO NOT restart DMA! */
+    /* Update position on idle line - DMA continues in circular mode */
     last_dma_write_pos = BLE_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
     last_rx_time = HAL_GetTick();
 }
 
 /**
- * @brief UART RX Complete Callback - handles DMA completion (timeout/buffer full)
+ * @brief UART RX Complete Callback - handles DMA buffer wrap (circular mode)
+ * @note With circular DMA, this is called when buffer wraps - no restart needed
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     if (huart->Instance == USART1) {
-        /* DIAGNOSTIC: Track DMA restarts */
-        static uint32_t restart_count = 0;
-        restart_count++;
-
-        /* Update write position before restart */
+        /* Update write position on buffer wrap - DMA continues automatically */
         last_dma_write_pos = BLE_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
-
-        /* Restart DMA */
-        HAL_StatusTypeDef restart_status = HAL_UARTEx_ReceiveToIdle_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE);
-        if (restart_status != HAL_OK) {
-            char debug_msg[100];
-            snprintf(debug_msg, sizeof(debug_msg),
-                    "BLE: ERROR - DMA restart #%lu failed (status=%d)\r\n",
-                    restart_count, restart_status);
-            DebugPrint(debug_msg);
-            dma_active = false;
-        } else {
-            __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
-
-            /* Log successful restarts periodically */
-            if (restart_count % 10 == 0) {
-                char debug_msg[80];
-                snprintf(debug_msg, sizeof(debug_msg),
-                        "BLE: DMA restart #%lu successful\r\n", restart_count);
-                DebugPrint(debug_msg);
-            }
-        }
+        last_rx_time = HAL_GetTick();
+        /* DMA continues in circular mode - no restart needed */
     }
 }
 
@@ -856,15 +818,13 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
         __HAL_UART_CLEAR_NEFLAG(huart);
         __HAL_UART_CLEAR_FEFLAG(huart);
         __HAL_UART_CLEAR_PEFLAG(huart);
+
+        /* Restart DMA in circular mode (CRITICAL: use same API as initial start) */
         extern DMA_HandleTypeDef hdma_usart1_rx;
         __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
 
-        HAL_StatusTypeDef restart_status = HAL_UART_Receive_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE);
-        if (restart_status != HAL_OK) {
-            snprintf(debug_msg, sizeof(debug_msg),
-                    "BLE: ERROR - Failed to restart DMA after error (status=%d)\r\n",
-                    restart_status);
-            DebugPrint(debug_msg);
+        if (HAL_UART_Receive_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE) != HAL_OK) {
+            DebugPrint("BLE: ERROR - Failed to restart DMA after error\r\n");
             dma_active = false;
         }
         __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
