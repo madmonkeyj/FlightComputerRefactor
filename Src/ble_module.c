@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "data_logger.h"
+#include "gps_module.h"  /* For GPS_UART_RxEventCallback() */
 
 /* External DMA handle for USART1 RX (defined in usart.c) */
 extern DMA_HandleTypeDef hdma_usart1_rx;
@@ -737,9 +738,13 @@ static bool BLE_StartDMA(void) {
  * @note Called from interrupt context - keep it fast!
  * @note CRITICAL: Must restart DMA after idle line event!
  */
+/**
+ * @brief Unified UART RX Event callback - dispatches to BLE and GPS handlers
+ * @note Handles both USART1 (BLE) and USART3 (GPS) idle line detection
+ */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
     if (huart->Instance == USART1) {
-        /* Update DMA write position */
+        /* BLE: Update DMA write position */
         last_dma_write_pos = BLE_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
         last_rx_time = HAL_GetTick();
 
@@ -749,6 +754,10 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) {
         } else {
             __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
         }
+    }
+    else if (huart->Instance == USART3) {
+        /* GPS: Dispatch to GPS module handler */
+        GPS_UART_RxEventCallback();
     }
 }
 

@@ -763,20 +763,13 @@ static void GPS_ParseAndExtractNAVSTATUS(uint8_t* payload, uint16_t len) {
 
 
 /**
- * @brief UART RX Event callback - handles GPS (USART3) DMA idle line detection
+ * @brief GPS-specific UART RX Event handler - called from unified HAL callback
  * @note Called when UART idle line is detected (message boundary)
- * @note BLE (USART1) now uses interrupt-based reception (HAL_UART_RxCpltCallback)
  */
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+void GPS_UART_RxEventCallback(void)
 {
-    (void)Size;  /* Size parameter not used in circular mode */
-
-    if (huart->Instance == USART3)
-    {
-        /* GPS: Update DMA write position on idle line detection */
-        last_dma_write_pos = GPS_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart3_rx);
-    }
-    /* Note: BLE (USART1) no longer uses this callback - it uses HAL_UART_RxCpltCallback for interrupt-based RX */
+    /* GPS: Update DMA write position on idle line detection */
+    last_dma_write_pos = GPS_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart3_rx);
 }
 
 
