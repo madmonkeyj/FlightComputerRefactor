@@ -270,12 +270,41 @@ bool BLE_SendResponse(const char* response) {
  * @brief Update BLE module - DMA version (same pattern as GPS)
  */
 void BLE_Update(void) {
+    /* DIAGNOSTIC: Track BLE_Update() call frequency */
+    static uint32_t last_update_heartbeat = 0;
+    static uint32_t update_call_count = 0;
+    update_call_count++;
+
+    if ((HAL_GetTick() - last_update_heartbeat) > 10000) {
+        char debug_msg[200];
+        snprintf(debug_msg, sizeof(debug_msg),
+                "BLE_Update: Called %lu times in last 10s, init=%d, dma_active=%d\r\n",
+                update_call_count, ble_initialized, dma_active);
+        DebugPrint(debug_msg);
+        update_call_count = 0;
+        last_update_heartbeat = HAL_GetTick();
+    }
+
     if (!ble_initialized || !dma_active) {
         return;
     }
 
     /* Get stable snapshot of DMA write position (updated by idle line callback) */
     uint16_t current_write_pos = BLE_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
+
+    /* DIAGNOSTIC: Track buffer state periodically */
+    static uint32_t last_buffer_report = 0;
+    if ((HAL_GetTick() - last_buffer_report) > 10000) {
+        char debug_msg[200];
+        snprintf(debug_msg, sizeof(debug_msg),
+                "BLE_Update: Buffer state - read_pos=%u, write_pos=%u, pending=%d\r\n",
+                buffer_read_pos, current_write_pos,
+                (current_write_pos >= buffer_read_pos) ?
+                    (current_write_pos - buffer_read_pos) :
+                    (BLE_RX_BUFFER_SIZE - buffer_read_pos + current_write_pos));
+        DebugPrint(debug_msg);
+        last_buffer_report = HAL_GetTick();
+    }
 
     /* Process all bytes from DMA circular buffer */
     while (buffer_read_pos != current_write_pos) {
@@ -741,6 +770,7 @@ static bool BLE_StartDMA(void) {
     buffer_read_pos = 0;
     last_dma_write_pos = 0;
 
+    DebugPrint("BLE: DMA started with idle line detection\r\n");
     return true;
 }
 
@@ -758,15 +788,32 @@ void BLE_UART_RxEventCallback(void) {
  */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     if (huart->Instance == USART1) {
+        /* DIAGNOSTIC: Track DMA restarts */
+        static uint32_t restart_count = 0;
+        restart_count++;
+
         /* Update write position before restart */
         last_dma_write_pos = BLE_RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
 
-        /* Restart DMA with idle line detection */
-        if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE) != HAL_OK) {
-            DebugPrint("BLE: ERROR - DMA restart failed\r\n");
+        /* Restart DMA */
+        HAL_StatusTypeDef restart_status = HAL_UARTEx_ReceiveToIdle_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE);
+        if (restart_status != HAL_OK) {
+            char debug_msg[100];
+            snprintf(debug_msg, sizeof(debug_msg),
+                    "BLE: ERROR - DMA restart #%lu failed (status=%d)\r\n",
+                    restart_count, restart_status);
+            DebugPrint(debug_msg);
             dma_active = false;
         } else {
             __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
+
+            /* Log successful restarts periodically */
+            if (restart_count % 10 == 0) {
+                char debug_msg[80];
+                snprintf(debug_msg, sizeof(debug_msg),
+                        "BLE: DMA restart #%lu successful\r\n", restart_count);
+                DebugPrint(debug_msg);
+            }
         }
     }
 }
@@ -777,25 +824,31 @@ void StartUartReception(void) { }
 bool ConfigureModule(void) { return BLE_Configure(); }
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
     if (huart->Instance == USART1) {
-        /* Log UART errors for debugging */
-        char debug_msg[100];
+        /* DIAGNOSTIC: Log UART errors */
+        static uint32_t uart_error_count = 0;
+        uart_error_count++;
+
+        char debug_msg[150];
         snprintf(debug_msg, sizeof(debug_msg),
-                "BLE: UART error 0x%08lX\r\n", huart->ErrorCode);
+                "BLE: UART error #%lu, ErrorCode=0x%08lX\r\n",
+                uart_error_count, huart->ErrorCode);
         DebugPrint(debug_msg);
 
-        /* Clear error flags */
         __HAL_UART_CLEAR_OREFLAG(huart);
         __HAL_UART_CLEAR_NEFLAG(huart);
         __HAL_UART_CLEAR_FEFLAG(huart);
         __HAL_UART_CLEAR_PEFLAG(huart);
-
-        /* Restart DMA with idle line detection (CRITICAL: use same API as initial start) */
         extern DMA_HandleTypeDef hdma_usart1_rx;
         __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
 
-        if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE) != HAL_OK) {
-            DebugPrint("BLE: ERROR - Failed to restart DMA after error\r\n");
+        HAL_StatusTypeDef restart_status = HAL_UART_Receive_DMA(&huart1, ble_rx_dma_buffer, BLE_RX_BUFFER_SIZE);
+        if (restart_status != HAL_OK) {
+            snprintf(debug_msg, sizeof(debug_msg),
+                    "BLE: ERROR - Failed to restart DMA after error (status=%d)\r\n",
+                    restart_status);
+            DebugPrint(debug_msg);
             dma_active = false;
         }
+        __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
     }
 }
