@@ -39,6 +39,12 @@ typedef struct {
 } NavSensorData_t;
 
 /**
+ * @brief Compatibility typedef for legacy code (TelemetryManager, etc.)
+ * @note NavSensorData_t and SensorData_t are identical structures
+ */
+typedef NavSensorData_t SensorData_t;
+
+/**
  * @brief Convert sensor_manager scaled data to navigation format
  * @param scaled_data Input from SensorManager_GetScaledData()
  * @param raw_data Input from SensorManager_ReadRaw() for validity flags

@@ -8,7 +8,8 @@
 
 #include "telemetry_manager.h"
 #include "lora_module.h"
-#include "battery_monitor.h"
+#include "battery_monitor.h"  // Battery voltage reading
+#include "sensor_adapter.h"   // For SensorData_t (=NavSensorData_t)
 #include "debug_utils.h"
 #include <string.h>
 #include <stdio.h>

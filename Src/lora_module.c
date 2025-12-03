@@ -6,8 +6,6 @@
 #include "debug_utils.h"
 #include <string.h>
 #include <stdio.h>
-#include "inter_mcu_comm.h"
-
 
 /* Forward declaration to avoid circular include */
 extern void TelemetryManager_TransmissionComplete(bool success);
@@ -41,9 +39,7 @@ static volatile bool lora_transmission_success = false;
  */
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
     if (huart == &huart2) {
-        /*LoRa_TransmissionComplete(true);*/
-        InterMCU_UART_RxCpltCallback(huart);
-
+        LoRa_TransmissionComplete(true);
     }
 }
 
@@ -52,8 +48,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
  */
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
     if (huart == &huart2) {
-        /*LoRa_TransmissionComplete(false);*/
-        InterMCU_UART_ErrorCallback(huart);
+        LoRa_TransmissionComplete(false);
     }
 }
 

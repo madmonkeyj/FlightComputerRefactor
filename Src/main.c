@@ -37,9 +37,9 @@
 /* NEW MODULE INCLUDES - Navigation and Telemetry */
 #include "sensor_adapter.h"       // Adapter: sensor_manager → navigation format
 #include "navigation_manager.h"   // AHRS + EKF coordinator (NOW WITH ADAPTER!)
-// #include "telemetry_manager.h"    // Telemetry coordination (disabled - requires LoRa)
-// #include "lora_module.h"          // LoRa wireless (disabled - UART conflict with BLE)
-// #include "flight_manager.h"       // Top-level orchestrator (disabled - requires telemetry)
+#include "lora_module.h"          // LoRa wireless (USART2)
+// #include "telemetry_manager.h"    // Telemetry coordination (next phase)
+// #include "flight_manager.h"       // Top-level orchestrator (optional)
 
 #include <math.h>
 #include <stdio.h>
@@ -344,27 +344,20 @@ int main(void)
   }
 
   // ===== LORA MODULE INITIALIZATION =====
-  // DISABLED: LoRa on USART1 conflicts with BLE
-  // To enable: resolve UART conflict (move BLE to USART2 or use USART2 for LoRa)
-  // GPIO pins already configured: M0=PB13, M1=PB12, AUX=PB14
-  /*
   if (LoRa_Init()) {
-      DebugPrint("LoRa module initialized\r\n");
+      DebugPrint("LoRa Module initialized successfully (USART2, 915MHz, 4.8kbps)\r\n");
   } else {
-      DebugPrint("ERROR: LoRa init failed\r\n");
+      DebugPrint("ERROR: LoRa Module initialization failed!\r\n");
   }
-  */
 
   // ===== TELEMETRY MANAGER INITIALIZATION =====
-  // DISABLED: Requires LoRa module for transmission
-  /*
   if (TelemetryManager_Init()) {
       DebugPrint("Telemetry Manager initialized\r\n");
       TelemetryManager_SetRateLimit(5.0f);  // 5Hz telemetry
+      TelemetryManager_SetAutoTelemetry(true, 200);  // Auto send every 200ms
   } else {
       DebugPrint("ERROR: Telemetry Manager init failed\r\n");
   }
-  */
 
   // ===== DATA LOGGER INITIALIZATION =====
   if (DataLogger_Init()) {
@@ -447,6 +440,12 @@ int main(void)
       if (ble_initialized) {
           BLE_Update();
       }
+
+      // ===== LORA MODULE =====
+      LoRa_Update();
+
+      // ===== TELEMETRY MANAGER =====
+      TelemetryManager_Update();
 
       // ===== USB COMMANDS =====
       USBCommands_Update();
