@@ -1,0 +1,170 @@
+/**
+  ******************************************************************************
+  * @file    sensor_manager.h
+  * @brief   Unified sensor management - DMA ONLY version with barometer
+  *          Optimized for 500Hz+ Mahony filter integration
+  ******************************************************************************
+  */
+
+#ifndef SENSOR_MANAGER_H_
+#define SENSOR_MANAGER_H_
+
+#include "main.h"
+#include <stdbool.h>
+#include <stdint.h>
+
+#define SENSOR_MANAGER_TIMESTAMP        1
+
+typedef struct {
+    int16_t accel_x;
+    int16_t accel_y;
+    int16_t accel_z;
+    int16_t gyro_x;
+    int16_t gyro_y;
+    int16_t gyro_z;
+    int32_t mag_x;
+    int32_t mag_y;
+    int32_t mag_z;
+    int16_t high_g_x;
+    int16_t high_g_y;
+    int16_t high_g_z;
+    int32_t pressure_raw;
+    int32_t temperature_raw;
+#if SENSOR_MANAGER_TIMESTAMP
+    uint32_t timestamp_us;
+#endif
+    uint8_t imu_valid    : 1;
+    uint8_t mag_valid    : 1;
+    uint8_t high_g_valid : 1;
+    uint8_t baro_valid   : 1;
+    uint8_t reserved     : 4;
+} SensorManager_RawData_t;
+
+typedef struct {
+    float accel_x_g;
+    float accel_y_g;
+    float accel_z_g;
+    float gyro_x_dps;
+    float gyro_y_dps;
+    float gyro_z_dps;
+    float mag_x_gauss;
+    float mag_y_gauss;
+    float mag_z_gauss;
+    float temperature_c;
+    float pressure_pa;
+    float altitude_m;
+    uint32_t timestamp_us;
+} SensorManager_ScaledData_t;
+
+typedef struct {
+    uint16_t imu_odr_hz;
+    uint16_t mag_odr_hz;
+    uint16_t baro_odr_hz;
+    uint16_t highg_odr_hz;       /* High-G accelerometer ODR (Hz) */
+    uint16_t main_loop_hz;       /* Expected main loop rate (Hz) for decimation calculation */
+    uint8_t  imu_accel_fs;
+    uint8_t  imu_gyro_fs;
+    bool     use_mag;
+    bool     use_high_g;
+    bool     use_baro;
+} SensorManager_Config_t;
+
+typedef struct {
+    uint32_t imu_read_count;
+    uint32_t mag_read_count;
+    uint32_t high_g_read_count;
+    uint32_t baro_read_count;
+    uint32_t imu_error_count;
+    uint32_t mag_error_count;
+    uint32_t high_g_error_count;
+    uint32_t baro_error_count;
+    uint32_t last_update_us;
+    float    actual_rate_hz;
+} SensorManager_Status_t;
+
+typedef struct {
+    float accel_scale;
+    float gyro_scale;
+    float mag_scale;
+    float temp_scale;
+    float temp_offset;
+    float pressure_scale;
+} SensorManager_Scales_t;
+
+/**
+ * @brief Sensor calibration parameters
+ * @note All calibrations optional - system works without them
+ * @note Disabled by default - call SensorManager_SetCalibration() to enable
+ */
+typedef struct {
+    /* Gyroscope bias (rad/s) */
+    float gyro_bias[3];
+    bool gyro_bias_valid;
+
+    /* Accelerometer offset and scale */
+    float accel_offset[3];  /* Offset (g) */
+    float accel_scale[3];   /* Scale factor */
+    bool accel_cal_valid;
+
+    /* Magnetometer hard iron offset (Gauss) */
+    float mag_offset[3];
+    /* Magnetometer soft iron matrix (3x3) */
+    float mag_scale[3][3];
+    bool mag_cal_valid;
+
+} SensorCalibration_t;
+
+/* Function prototypes */
+HAL_StatusTypeDef SensorManager_Init(const SensorManager_Config_t *config);
+HAL_StatusTypeDef SensorManager_ReadRaw(SensorManager_RawData_t *data);
+HAL_StatusTypeDef SensorManager_ReadScaled(SensorManager_ScaledData_t *data);
+void SensorManager_GetScales(SensorManager_Scales_t *scales);
+void SensorManager_GetStatus(SensorManager_Status_t *status);
+void SensorManager_ConvertToScaled(const SensorManager_RawData_t *raw,
+                                     SensorManager_ScaledData_t *scaled);
+
+/* Interrupt callbacks */
+void SensorManager_IMU_DataReady_Callback(void);
+void SensorManager_MAG_DataReady_Callback(void);
+void SensorManager_HighG_DataReady_Callback(void);
+void SensorManager_BARO_DataReady_Callback(void);
+
+/* DMA completion callbacks */
+void SensorManager_IMU_DMA_Complete_Callback(void);
+void SensorManager_MAG_DMA_Complete_Callback(void);
+void SensorManager_BARO_DMA_Complete_Callback(void);
+
+void SensorManager_GetMahonyData(const SensorManager_RawData_t *raw,
+                                  float *gx, float *gy, float *gz,
+                                  float *ax, float *ay, float *az,
+                                  float *mx, float *my, float *mz);
+
+/**
+ * @brief Reset sensor manager state (for testing/re-initialization)
+ * @note Clears cached sensor data and resets decimation counters
+ */
+void SensorManager_ResetState(void);
+
+/**
+ * @brief Set sensor calibration parameters
+ * @param cal Pointer to calibration structure
+ * @note Calibration is optional - pass NULL to disable
+ * @note System works fine without calibration (disabled by default)
+ */
+void SensorManager_SetCalibration(const SensorCalibration_t* cal);
+
+/**
+ * @brief Get current calibration parameters
+ * @param cal Pointer to store calibration
+ * @return true if calibration data copied successfully
+ */
+bool SensorManager_GetCalibration(SensorCalibration_t* cal);
+
+/**
+ * @brief Get cached sensor data without triggering new read
+ * @param data Pointer to store cached data
+ * @return HAL_OK if valid data available
+ */
+HAL_StatusTypeDef SensorManager_GetLatestRaw(SensorManager_RawData_t *data);
+
+#endif /* SENSOR_MANAGER_H_ */

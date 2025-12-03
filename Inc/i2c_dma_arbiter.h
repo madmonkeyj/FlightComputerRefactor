@@ -1,0 +1,117 @@
+/**
+  ******************************************************************************
+  * @file    i2c_dma_arbiter.h
+  * @brief   Non-preemptive FCFS I2C DMA arbiter for multiple sensors on one bus
+  * @note    Manages MAG, BARO, and High-G sensors on shared I2C bus
+  * @note    Uses first-come-first-served (FCFS) scheduling with timeout watchdog
+  ******************************************************************************
+  */
+
+#ifndef I2C_DMA_ARBITER_H_
+#define I2C_DMA_ARBITER_H_
+
+#include "main.h"
+#include "i2c.h"
+#include <stdbool.h>
+
+/* Device identifiers for I2C sensors (values reserved for future priority support) */
+typedef enum {
+    I2C_DMA_DEVICE_MAG = 0,      // Magnetometer - 1kHz updates for Mahony
+    I2C_DMA_DEVICE_BARO = 1,     // Barometer - 100Hz decimated
+    I2C_DMA_DEVICE_HIGHG = 2,    // High-G accelerometer - 400Hz shock detection
+    I2C_DMA_DEVICE_COUNT = 3
+} I2C_DMA_Device_t;
+
+/* Arbiter statistics (optional, for debugging) */
+typedef struct {
+    uint32_t mag_requests;
+    uint32_t baro_requests;
+    uint32_t highg_requests;
+    uint32_t mag_conflicts;
+    uint32_t baro_conflicts;
+    uint32_t highg_conflicts;
+    uint32_t total_transfers;
+} I2C_DMA_Arbiter_Stats_t;
+
+/* Callback function type */
+typedef void (*I2C_DMA_Callback_t)(void);
+
+/**
+ * @brief Initialize the I2C DMA arbiter
+ */
+void I2C_DMA_Arbiter_Init(void);
+
+/**
+ * @brief Request a DMA transfer (non-preemptive FCFS scheduling)
+ * @param hi2c: I2C handle
+ * @param device: Device requesting transfer (for statistics tracking)
+ * @param dev_address: I2C device address (7-bit, shifted)
+ * @param mem_address: Register address to read from
+ * @param mem_size: Memory address size (I2C_MEMADD_SIZE_8BIT or 16BIT)
+ * @param buffer: Buffer to receive data
+ * @param size: Number of bytes to read
+ * @param callback: Completion callback function
+ * @retval HAL_OK if started, HAL_BUSY if arbiter occupied
+ * @note Uses atomic check-and-set to prevent race conditions
+ */
+HAL_StatusTypeDef I2C_DMA_Arbiter_RequestTransfer(
+    I2C_HandleTypeDef *hi2c,
+    I2C_DMA_Device_t device,
+    uint16_t dev_address,
+    uint16_t mem_address,
+    uint16_t mem_size,
+    uint8_t *buffer,
+    uint16_t size,
+    I2C_DMA_Callback_t callback
+);
+
+/**
+ * @brief Check if arbiter is busy
+ * @param hi2c: I2C handle (reserved for future multi-bus support)
+ * @retval true if arbiter is busy, false if available
+ * @note Current implementation only supports single I2C bus (hi2c1)
+ * @note Parameter retained for API consistency and future expansion
+ */
+bool I2C_DMA_Arbiter_IsBusy(I2C_HandleTypeDef *hi2c);
+
+/**
+ * @brief Get current device using the bus
+ * @param hi2c: I2C handle (reserved for future multi-bus support)
+ * @retval Current device, or I2C_DMA_DEVICE_COUNT if idle
+ * @note Current implementation only supports single I2C bus (hi2c1)
+ * @note Parameter retained for API consistency and future expansion
+ */
+I2C_DMA_Device_t I2C_DMA_Arbiter_GetCurrentDevice(I2C_HandleTypeDef *hi2c);
+
+/**
+ * @brief Handle DMA transfer completion (called from HAL callback)
+ * @param hi2c: I2C handle
+ */
+void I2C_DMA_Arbiter_HandleComplete(I2C_HandleTypeDef *hi2c);
+
+/**
+ * @brief Handle DMA transfer error (called from HAL callback)
+ * @param hi2c: I2C handle
+ */
+void I2C_DMA_Arbiter_HandleError(I2C_HandleTypeDef *hi2c);
+
+/**
+ * @brief Watchdog to detect and recover from stuck DMA transfers
+ * @retval true if timeout occurred and arbiter was reset
+ * @note Call from main loop or periodic timer (every 10-50ms recommended)
+ * @note Automatically releases arbiter if DMA takes longer than 100ms
+ */
+bool I2C_DMA_Arbiter_Watchdog(void);
+
+/**
+ * @brief Get arbiter statistics (for debugging)
+ * @param stats: Pointer to statistics structure
+ */
+void I2C_DMA_Arbiter_GetStats(I2C_DMA_Arbiter_Stats_t *stats);
+
+/**
+ * @brief Reset arbiter statistics
+ */
+void I2C_DMA_Arbiter_ResetStats(void);
+
+#endif /* I2C_DMA_ARBITER_H_ */
