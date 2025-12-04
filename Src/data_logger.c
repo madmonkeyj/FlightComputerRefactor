@@ -195,8 +195,13 @@ static void PackDataRecord(DataRecord_t* record) {
             for (int i = 0; i < 3; i++) record->innovation_pos[i] = NAN;
         }
 
-        // 🚫 Velocity innovation – leave as NAN for now
-        for (int i = 0; i < 3; i++) record->innovation_vel[i] = NAN;
+        // Velocity innovation
+        if (nav_provider->get_innovation_velocity &&
+            nav_provider->get_innovation_velocity(temp_vec)) {
+            memcpy(record->innovation_pos, temp_vec, sizeof(float) * 3);
+        } else {
+            for (int i = 0; i < 3; i++) record->innovation_vel[i] = NAN;
+        }
 
         // Kalman gain position
         if (nav_provider->get_kalman_gain_position &&
@@ -648,3 +653,4 @@ void Metadata_Clear(void) {
     recording_start_time = 0;
     last_record_time = 0;
 }
+
